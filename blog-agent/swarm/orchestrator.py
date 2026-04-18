@@ -1,0 +1,252 @@
+"""
+Buteforce Blog Agent — Swarm Orchestrator
+Stateful pipeline: research → verify → write → humanise → verify → publish
+State lives in Supabase. Each stage is a separate ADK agent run.
+"""
+from __future__ import annotations
+
+import asyncio
+import io
+import json
+import os
+import sys
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+# Force UTF-8 output on Windows to avoid CP1252 encoding errors
+if hasattr(sys.stdout, 'buffer') and sys.stdout.encoding.lower() != 'utf-8':
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
+
+from dotenv import load_dotenv
+
+# Load env from repo root
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+
+from supabase import create_client, Client
+from google.adk.agents import LlmAgent
+from google.adk.runners import Runner
+from google.adk.sessions import InMemorySessionService
+from google.genai import types as genai_types
+
+from swarm.agents.research import make_research_agent
+from swarm.agents.writer import make_writer_agent
+from swarm.agents.humaniser import make_humaniser_agent
+from swarm.agents.publisher import make_publisher_agent
+
+if os.name == "nt":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
+# ── Supabase ────────────────────────────────────────────────────────────────
+def _db() -> Client:
+    return create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_SERVICE_KEY"])
+
+# ── Status transitions ───────────────────────────────────────────────────────
+PIPELINE = [
+    "queued",
+    "researching",
+    "verifying_research",
+    "writing",
+    "verifying_draft",
+    "publishing",
+    "published",
+]
+
+STATUS_LABELS = {
+    "queued":             "Queued",
+    "researching":        "Researching...",
+    "verifying_research": "Research Ready — Awaiting Approval",
+    "writing":            "Writing...",
+    "verifying_draft":    "Draft Ready — Awaiting Approval",
+    "publishing":         "Publishing...",
+    "published":          "Published ✓",
+    "failed":             "Failed",
+}
+
+
+def _update_status(slug: str, status: str) -> None:
+    _db().table("topics").update({
+        "status": status,
+        "updated_at": datetime.utcnow().isoformat() + "Z",
+    }).eq("slug", slug).execute()
+
+
+def _upsert_post(topic_id: str, data: dict) -> None:
+    data["topic_id"] = topic_id
+    data["updated_at"] = datetime.utcnow().isoformat() + "Z"
+    _db().table("blog_posts").upsert(data, on_conflict="topic_id").execute()
+
+
+def _get_post(topic_id: str) -> dict:
+    r = _db().table("blog_posts").select("*").eq("topic_id", topic_id).limit(1).execute()
+    return r.data[0] if r.data else {}
+
+
+# ── ADK runner ───────────────────────────────────────────────────────────────
+async def _run_agent(agent: LlmAgent, prompt: str, session_id: str, retries: int = 3) -> str:
+    last_err: Exception | None = None
+    for attempt in range(retries):
+        try:
+            svc = InMemorySessionService()
+            session = await svc.create_session(
+                app_name=agent.name, user_id="dhyan", session_id=f"{session_id}-{attempt}"
+            )
+            runner = Runner(agent=agent, app_name=agent.name, session_service=svc)
+            content = genai_types.Content(role="user", parts=[genai_types.Part(text=prompt)])
+            parts: list[str] = []
+            async for event in runner.run_async(user_id="dhyan", session_id=session.id, new_message=content):
+                if hasattr(event, "content") and event.content:
+                    for p in event.content.parts:
+                        if hasattr(p, "text") and p.text:
+                            parts.append(p.text)
+            return "".join(parts).strip()
+        except Exception as exc:
+            last_err = exc
+            msg = str(exc).lower()
+            is_quota = "resource exhausted" in msg or "429" in msg or "quota" in msg
+            if is_quota and attempt < retries - 1:
+                wait = 20 * (attempt + 1)
+                print(f"  [WAIT] Quota hit, retrying in {wait}s...", flush=True)
+                await asyncio.sleep(wait)
+            else:
+                break
+    raise RuntimeError(f"Agent '{agent.name}' failed after {retries} attempts: {last_err}")
+
+
+def _run(agent: LlmAgent, prompt: str, session_id: str) -> str:
+    return asyncio.run(_run_agent(agent, prompt, session_id))
+
+
+# ── Orchestrator ─────────────────────────────────────────────────────────────
+class BlogOrchestrator:
+    def __init__(self) -> None:
+        model_name = os.environ.get("ADK_GEMINI_MODEL", "gemini-2.0-flash")
+        self.model = model_name  # ADK accepts model name string directly
+        self.research_agent  = make_research_agent(self.model)
+        self.writer_agent    = make_writer_agent(self.model)
+        self.humaniser_agent = make_humaniser_agent(self.model)
+        self.publisher_agent = make_publisher_agent(self.model)
+
+    # ── Stage: Research ──────────────────────────────────────────────────────
+    def run_research(self, topic_id: str, slug: str, title: str, tags: list[str]) -> dict:
+        print(f"\n[research] Starting multi-source research for: {title}", flush=True)
+        _update_status(slug, "researching")
+
+        prompt = f"Research this topic thoroughly using all available tools:\n\nTopic: {title}\nTags: {', '.join(tags)}"
+        raw = _run(self.research_agent, prompt, f"research-{topic_id}")
+
+        # Extract JSON from response
+        start = raw.find("{")
+        end = raw.rfind("}") + 1
+        research_json = raw[start:end] if start >= 0 else raw
+
+        # Validate it's parseable
+        try:
+            parsed = json.loads(research_json)
+        except json.JSONDecodeError:
+            parsed = {"raw": raw, "topic": title}
+            research_json = json.dumps(parsed)
+
+        _upsert_post(topic_id, {"research_json": research_json})
+        _update_status(slug, "verifying_research")
+        print(f"[research] Done. Status -> verifying_research", flush=True)
+        return parsed
+
+    # ── Stage: Write + Humanise ──────────────────────────────────────────────
+    def run_writing(self, topic_id: str, slug: str, title: str, feedback: str = "") -> dict:
+        post = _get_post(topic_id)
+        research_json = post.get("research_json", "{}")
+
+        print(f"\n[writer] Writing blog post...", flush=True)
+        _update_status(slug, "writing")
+
+        feedback_section = f"\n\nOPERATOR FEEDBACK TO INCORPORATE:\n{feedback}" if feedback else ""
+        writer_prompt = (
+            f"Write a complete blog post based on this research digest:\n\n"
+            f"{research_json}"
+            f"{feedback_section}"
+        )
+        draft = _run(self.writer_agent, writer_prompt, f"writer-{topic_id}")
+        print(f"[writer] Draft ready ({len(draft.split())} words). Running humaniser...", flush=True)
+
+        humaniser_prompt = (
+            f"Humanise this draft blog post — make it sound exactly like Dhyan Karthik wrote it:\n\n{draft}"
+        )
+        final = _run(self.humaniser_agent, humaniser_prompt, f"humaniser-{topic_id}")
+
+        word_count = len(final.split())
+
+        # Extract meta from front-matter
+        meta_title = title
+        meta_desc = ""
+        for line in final.split("\n"):
+            if line.startswith("title:"):
+                meta_title = line.replace("title:", "").strip().strip('"')
+            if line.startswith("description:"):
+                meta_desc = line.replace("description:", "").strip().strip('"')
+
+        _upsert_post(topic_id, {
+            "mdx_draft": draft,
+            "mdx_final": final,
+            "meta_title": meta_title,
+            "meta_description": meta_desc,
+            "word_count": word_count,
+        })
+        _update_status(slug, "verifying_draft")
+        print(f"[writer] Done. {word_count} words. Status -> verifying_draft", flush=True)
+        return {"word_count": word_count, "meta_title": meta_title, "meta_description": meta_desc}
+
+    # ── Stage: Publish ───────────────────────────────────────────────────────
+    def run_publish(self, topic_id: str, slug: str) -> dict:
+        post = _get_post(topic_id)
+        mdx_final = post.get("mdx_final", "")
+        meta_title = post.get("meta_title", slug)
+
+        if not mdx_final:
+            raise ValueError(f"No mdx_final found for topic {slug}")
+
+        print(f"\n[publisher] Publishing: {meta_title}", flush=True)
+        _update_status(slug, "publishing")
+
+        publisher_prompt = json.dumps({
+            "topic_id": topic_id,
+            "slug": slug,
+            "title": meta_title,
+            "mdx_content": mdx_final,
+        })
+        result_raw = _run(self.publisher_agent, publisher_prompt, f"publisher-{topic_id}")
+
+        try:
+            start = result_raw.find("{")
+            end = result_raw.rfind("}") + 1
+            result = json.loads(result_raw[start:end]) if start >= 0 else {}
+        except Exception:
+            result = {"published": False, "error": result_raw}
+
+        if result.get("published") or result.get("dry_run"):
+            _update_status(slug, "published")
+            print(f"[publisher] Published OK url={result.get('published_url', 'dry-run')}", flush=True)
+        else:
+            _update_status(slug, "failed")
+            print(f"[publisher] Failed: {result.get('error', 'unknown')}", flush=True)
+
+        return result
+
+    # ── Rejection handler ────────────────────────────────────────────────────
+    def handle_rejection(self, topic_id: str, slug: str, current_status: str, feedback: str) -> None:
+        """Re-run the appropriate stage with operator feedback."""
+        _db().table("blog_posts").select("rejection_log").eq("topic_id", topic_id).execute()
+        post = _get_post(topic_id)
+        log = post.get("rejection_log") or []
+        log.append({"status": current_status, "feedback": feedback, "at": datetime.utcnow().isoformat()})
+        _upsert_post(topic_id, {"rejection_log": json.dumps(log)})
+
+        topic = _db().table("topics").select("*").eq("id", topic_id).limit(1).execute().data[0]
+        title = topic["title"]
+        tags = topic.get("tags", [])
+
+        if current_status == "verifying_research":
+            self.run_research(topic_id, slug, title, tags)
+        elif current_status == "verifying_draft":
+            self.run_writing(topic_id, slug, title, feedback=feedback)

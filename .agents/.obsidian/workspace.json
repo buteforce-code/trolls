@@ -1,0 +1,219 @@
+{
+  "main": {
+    "id": "fb25b79157219b66",
+    "type": "split",
+    "children": [
+      {
+        "id": "0032cabe4f8a241c",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "512f4d3f21e775c4",
+            "type": "leaf",
+            "state": {
+              "type": "empty",
+              "state": {},
+              "icon": "lucide-file",
+              "title": "New tab"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "vertical"
+  },
+  "left": {
+    "id": "b14e8b523b188d2e",
+    "type": "split",
+    "children": [
+      {
+        "id": "6c0604b12ed83ac0",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "d072377f46eddb6e",
+            "type": "leaf",
+            "state": {
+              "type": "file-explorer",
+              "state": {
+                "sortOrder": "alphabetical",
+                "autoReveal": false
+              },
+              "icon": "lucide-folder-closed",
+              "title": "Files"
+            }
+          },
+          {
+            "id": "f228de68804e4722",
+            "type": "leaf",
+            "state": {
+              "type": "search",
+              "state": {
+                "query": "tag:#graphify/document",
+                "matchingCase": false,
+                "explainSearch": false,
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical"
+              },
+              "icon": "lucide-search",
+              "title": "Search"
+            }
+          },
+          {
+            "id": "788af793d99cf6cb",
+            "type": "leaf",
+            "state": {
+              "type": "bookmarks",
+              "state": {},
+              "icon": "lucide-bookmark",
+              "title": "Bookmarks"
+            }
+          }
+        ],
+        "currentTab": 1
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300
+  },
+  "right": {
+    "id": "1fc79854194b4379",
+    "type": "split",
+    "children": [
+      {
+        "id": "160ead2990da7b76",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "fbd567951f6a5cb7",
+            "type": "leaf",
+            "state": {
+              "type": "backlink",
+              "state": {
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical",
+                "showSearch": false,
+                "searchQuery": "",
+                "backlinkCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-coming-in",
+              "title": "Backlinks"
+            }
+          },
+          {
+            "id": "d9a53099395667ad",
+            "type": "leaf",
+            "state": {
+              "type": "outgoing-link",
+              "state": {
+                "linksCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-going-out",
+              "title": "Outgoing links"
+            }
+          },
+          {
+            "id": "cad23515e6830958",
+            "type": "leaf",
+            "state": {
+              "type": "tag",
+              "state": {
+                "sortOrder": "frequency",
+                "useHierarchy": true,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-tags",
+              "title": "Tags"
+            }
+          },
+          {
+            "id": "90093acf71f4cfb0",
+            "type": "leaf",
+            "state": {
+              "type": "all-properties",
+              "state": {
+                "sortOrder": "frequency",
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-archive",
+              "title": "All properties"
+            }
+          },
+          {
+            "id": "a5945d61f5b735c5",
+            "type": "leaf",
+            "state": {
+              "type": "outline",
+              "state": {
+                "followCursor": false,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-list",
+              "title": "Outline"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300,
+    "collapsed": true
+  },
+  "left-ribbon": {
+    "hiddenItems": {
+      "switcher:Open quick switcher": false,
+      "graph:Open graph view": false,
+      "canvas:Create new canvas": false,
+      "daily-notes:Open today's daily note": false,
+      "templates:Insert template": false,
+      "command-palette:Open command palette": false,
+      "bases:Create new base": false
+    }
+  },
+  "active": "512f4d3f21e775c4",
+  "lastOpenFiles": [
+    "graphify-out/obsidian/Brand Name Buteforce.md",
+    "graphify-out/obsidian/Accent Color Yellow FFFC01.md",
+    "graphify-out/obsidian/LinkedIn Personal Brand Channel.md",
+    "graphify-out/obsidian/Supabase Campaign Database.md",
+    "graphify-out/cache/66bda0b49837a6f5e8e2becf72471a90c4add0913c0f6af34178dea57fb65c61.json",
+    "graphify-out/cache/59895b4fc1c1118ed5aedc06e04e85be6b1464d4ef1b832d1a37fa079f6d9390.json",
+    "graphify-out/cache/361fb645a3cc6f4a2e488fa378ec887ef89e79fa26b89ffbff61c2ca2ce4494a.json",
+    "graphify-out/obsidian/Campaign Rules.md",
+    "graphify-out/obsidian/DesignerAgent (Swarm Sub-agent).md",
+    "graphify-out/obsidian/HumaniserAgent (Brand Voice Filter).md",
+    "graphify-out/obsidian/WriterAgent (Swarm Sub-agent).md",
+    "graphify-out/obsidian/ResearchAgent (Swarm Sub-agent).md",
+    "graphify-out/obsidian/SwarmOrchestrator (Google ADK).md",
+    "graphify-out/obsidian/X (Twitter) Marketing Channel.md",
+    "graphify-out/obsidian/YOLOv8 Computer Vision Model.md",
+    "graphify-out/obsidian/Website Design Language.md",
+    "graphify-out/obsidian/TangoEye (Hooter Competitor).md",
+    "graphify-out/obsidian/Upwork Lead Source.md",
+    "graphify-out/obsidian/TinaCMS Frontmatter Schema Alignment.md",
+    "graphify-out/obsidian/Unlearning Protocol for AI Agents.md",
+    "graphify-out/obsidian/Tagline Precision AI Systems.md",
+    "graphify-out/obsidian/Real Estate ICP.md",
+    "graphify-out/obsidian/Rationale Why Precision AI Systems Works.md",
+    "graphify-out/obsidian/Rationale RevOp Auto-Detection vs TangoEye Manual Tagging.md",
+    "graphify-out/obsidian/Project Plans Index Section.md",
+    "graphify-out/obsidian/Proof Points Summary Table.md",
+    "graphify-out/obsidian/Organic SEO Lead Source.md",
+    "graphify-out/obsidian/obsidian-vault MCP Server.md",
+    "graphify-out/obsidian/Mistral 7B LLM.md",
+    "graphify-out/obsidian",
+    "graphify-out/graph.html",
+    "graphify-out/graph.json",
+    "graphify-out/cache",
+    "graphify-out",
+    "codex",
+    "Untitled"
+  ]
+}

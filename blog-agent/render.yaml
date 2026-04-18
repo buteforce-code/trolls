@@ -1,0 +1,53 @@
+services:
+  - type: web
+    name: buteforce-blog-dashboard
+    runtime: node
+    rootDir: blog-agent/dashboard
+    buildCommand: python -m pip install -r ../requirements.txt && npm ci && npm run build
+    startCommand: npm run start
+    healthCheckPath: /
+    envVars:
+      - key: GOOGLE_AI_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GOOGLE_GENAI_USE_VERTEXAI
+        value: "false"
+      - key: GOOGLE_CLOUD_PROJECT
+        sync: false
+      - key: GOOGLE_CLOUD_LOCATION
+        value: us-central1
+      - key: GOOGLE_APPLICATION_CREDENTIALS
+        sync: false
+      - key: ADK_GEMINI_MODEL
+        value: gemini-2.5-flash
+      - key: PYTHONUTF8
+        value: "1"
+      - key: TAVILY_API_KEY
+        sync: false
+      - key: YOUTUBE_API_KEY
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: NEXT_PUBLIC_SUPABASE_URL
+        sync: false
+      - key: NEXT_PUBLIC_SUPABASE_ANON_KEY
+        sync: false
+      - key: NEXT_PUBLIC_APP_URL
+        sync: false
+      - key: APP_SECRET
+        sync: false
+      - key: GITHUB_TOKEN
+        sync: false
+      - key: GITHUB_REPO
+        sync: false
+      - key: GITHUB_BLOG_PATH
+        value: content/blog
+      - key: GITHUB_BRANCH
+        value: main
+      - key: PUBLISH_DRY_RUN
+        value: "false"
