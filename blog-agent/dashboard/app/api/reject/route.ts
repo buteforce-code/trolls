@@ -13,10 +13,10 @@ export async function POST(request: Request) {
   const repoRoot = path.resolve(process.cwd(), '..')
   console.log(`Rejecting stage for topic: ${slug} with feedback`)
   
-  const child = spawn('python', ['run.py', '--reject', slug, '--feedback', feedback], {
+  const child = spawn('python', ['run.py', '--reject', slug, '--feedback', feedback || ''], {
     cwd: repoRoot,
     detached: true,
-    stdio: 'ignore'
+    stdio: 'inherit'
   })
   
   child.unref()

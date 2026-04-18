@@ -14,7 +14,7 @@ export async function POST(request: Request) {
   const child = spawn('python', ['run.py', '--approve', slug], {
     cwd: repoRoot,
     detached: true,
-    stdio: 'ignore'
+    stdio: 'inherit'
   })
   
   child.unref()
