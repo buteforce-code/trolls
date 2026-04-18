@@ -209,24 +209,24 @@ class BlogOrchestrator:
         print(f"\n[publisher] Publishing: {meta_title}", flush=True)
         _update_status(slug, "publishing")
 
-        publisher_prompt = json.dumps({
-            "topic_id": topic_id,
-            "slug": slug,
-            "title": meta_title,
-            "mdx_content": mdx_final,
-        })
-        result_raw = _run(self.publisher_agent, publisher_prompt, f"publisher-{topic_id}")
+        from swarm.tools.github_tool import github_publish
+        result_raw = github_publish(slug, meta_title, mdx_final)
 
         try:
-            start = result_raw.find("{")
-            end = result_raw.rfind("}") + 1
-            result = json.loads(result_raw[start:end]) if start >= 0 else {}
+            result = json.loads(result_raw)
         except Exception:
             result = {"published": False, "error": result_raw}
 
-        if result.get("published") or result.get("dry_run"):
+        if result.get("success") or result.get("dry_run"):
             _update_status(slug, "published")
-            print(f"[publisher] Published OK url={result.get('published_url', 'dry-run')}", flush=True)
+            url = result.get("published_url", "(dry-run)")
+            
+            _upsert_post(topic_id, {
+                "published_url": url,
+                "published_at": datetime.utcnow().isoformat() + "Z",
+            })
+            print(f"[publisher] Published OK url={url}", flush=True)
+            result["published"] = True
         else:
             _update_status(slug, "failed")
             print(f"[publisher] Failed: {result.get('error', 'unknown')}", flush=True)
