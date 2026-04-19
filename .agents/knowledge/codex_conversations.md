@@ -22,6 +22,22 @@ Do not use this file as the source of truth for stable facts if a better knowled
 
 ## Session Log
 
+### 2026-04-19 — Blog Agent to Live Site API Integration
+
+**Project:** `D:\Projects\Buteforce\Projects\Marketing agents\blog-agent` and `D:\Projects\Buteforce\Site\buteforce-website`
+
+**Work done:**
+1. **Agent-to-Site Gateway:** Implemented a new Next.js `/api/agent/blog` endpoint directly on the Buteforce website. This acts as a centralized receiver to parse deployed site content (`lib/data.ts` and `content/blog`) and handle authenticated Github pushes.
+2. **Crash Prevention Built:** Rewrote `site_tool.py` so it executes `GET` fetch requests toward the live Buteforce API instead of crashing against hardcoded local Windows file paths when deployed on Render.
+3. **Decoupled Github from Agent:** Discarded direct `github_publish` methodology from the Render agent. The agent payload is now sent directly via `POST` to the custom Buteforce gateway, enabling seamless publishing without keeping a live `GITHUB_TOKEN` vulnerable on Render.
+4. **Docs Updated:** Pruned old dependencies systematically off the `.env` lists in `tech_stack.md` and `render.yaml`. Replaced with `SITE_API_URL` and secure `AGENT_SECRET_KEY` requirements.
+
+**Next:**
+- Setup environment variables on Render (`AGENT_SECRET_KEY`) and Vercel (`AGENT_SECRET_KEY`, `GITHUB_PUBLISH_TOKEN`).
+- Fire test blog off the updated Swarm Publisher stack.
+
+---
+
 ### 2026-04-16 — Hooter / RetailEye Dashboard Redesign + Production Prep
 
 **Project:** `D:\Projects\Staff heat map` — Retail foot-traffic analytics platform (CV pipeline + Next.js dashboard)

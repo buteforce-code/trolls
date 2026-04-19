@@ -41,13 +41,10 @@ services:
         sync: false
       - key: APP_SECRET
         sync: false
-      - key: GITHUB_TOKEN
-        sync: false
-      - key: GITHUB_REPO
-        sync: false
-      - key: GITHUB_BLOG_PATH
-        value: content/blog
-      - key: GITHUB_BRANCH
-        value: main
+      - key: SITE_API_URL
+        value: "https://buteforce.com/api/agent/blog"
+      - key: AGENT_SECRET_KEY
+        value: "dhyanesh"
       - key: PUBLISH_DRY_RUN
+
         value: "false"

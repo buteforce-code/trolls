@@ -147,8 +147,8 @@ queued → researching → verifying_research → writing → verifying_draft �
 - `swarm/orchestrator.py` — Stage runner, 3-retry wrapper, DB upsert via Supabase
 - `swarm/agents/research.py` — 9-tool research agent with site awareness (avoids duplicate posts)
 - `swarm/agents/writer.py` — Draft + humaniser agent; outputs TinaCMS-exact frontmatter
-- `swarm/tools/github_tool.py` — Publishes .mdx to buteforce-code/ButeForce-Site/content/blog/
-- `swarm/tools/site_tool.py` — Reads existing posts + lib/data.ts for brand/duplicate awareness
+- `swarm/tools/github_tool.py` — Publishes .mdx to Buteforce Site via Custom Agent Webhook (`/api/agent/blog`)
+- `swarm/tools/site_tool.py` — Reads existing posts + lib/data.ts remotely via `GET /api/agent/blog` to stay aware of brand/duplicate data when published on Render.
 - `dashboard/app/page.tsx` — Topic grid with status badges, delete, filter
 - `dashboard/app/topic/[slug]/page.tsx` — Detail: pipeline steps, research digest, draft preview, approve/reject
 - `dashboard/app/api/` — Route handlers: topics, topic/[slug], run, approve, reject, delete, reset
@@ -161,7 +161,8 @@ queued → researching → verifying_research → writing → verifying_draft �
 2. **All mutating actions spawn detached Python** — `spawn('python', ['run.py', '--action', slug], { detached: true, stdio: 'ignore' })` then `child.unref()`. Returns `{ success: true }` immediately.
 3. **TinaCMS frontmatter must be exact** — only `title`, `description`, `date`, `tags`, `image`. No slug, author, excerpt, seo_keywords.
 4. **Filename format** — `{slug}.mdx` (no date prefix). TinaCMS requires this for routing.
-5. **PUBLISH_DRY_RUN=true** in .env.local — set to `false` when ready to go live.
+5. **No direct GitHub pushes from Render Agent** — Avoid keeping GitHub tokens natively inside Render. Use the custom `/api/agent/blog` endpoint directly on Buteforce-Site, authenticated via `AGENT_SECRET_KEY`.
+6. **PUBLISH_DRY_RUN=true** in .env.local — set to `false` when ready to go live.
 
 ### Supabase Schema Notes
 
@@ -171,10 +172,9 @@ queued → researching → verifying_research → writing → verifying_draft �
 
 ### Site Integration
 
-- `SITE_ROOT = D:/Projects/Buteforce/Site/buteforce-website`
-- Research agent reads `content/blog/*.mdx` to avoid writing duplicate topics
-- Research agent reads `lib/data.ts` for services, stats, clients (brand alignment)
-- Published content goes to: `buteforce-code/ButeForce-Site` repo, `content/blog/` path, `main` branch
+- The agent interacts with the live website via `POST` and `GET` requests to `https://buteforce.com/api/agent/blog` (or configured `SITE_API_URL`). 
+- Research agent pulls live `/content/blog/` to evade duplicate content overlaps and extracts JSON summaries from `lib/data.ts` to uphold brand messaging.
+- Publisher agent commits directly through the proxy endpoint. `ButeForce-Site` API uses `GITHUB_PUBLISH_TOKEN` to fulfill commit protocols on `buteforce-code/ButeForce-Site` repository.
 
 ### Environment Variables (dashboard/.env.local)
 
@@ -185,10 +185,8 @@ ADK_GEMINI_MODEL=gemini-2.5-flash
 TAVILY_API_KEY=...
 SUPABASE_URL=...
 SUPABASE_ANON_KEY=...         # Safe for Next.js (sb_publishable_* format)
-GITHUB_TOKEN=...
-GITHUB_REPO=buteforce-code/ButeForce-Site
-GITHUB_BLOG_PATH=content/blog
-GITHUB_BRANCH=main
+SITE_API_URL=https://buteforce.com/api/agent/blog
+AGENT_SECRET_KEY=...          # Token syncing agent to website API
 PUBLISH_DRY_RUN=true
 ```
 
