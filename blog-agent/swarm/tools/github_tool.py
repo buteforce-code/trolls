@@ -6,7 +6,6 @@ GitHub tool — two functions:
 from __future__ import annotations
 import os
 import json
-import base64
 import urllib.request
 import urllib.parse
 
@@ -58,7 +57,7 @@ def github_publish(slug: str, title: str, mdx_content: str) -> str:
     The agent now pushes content directly to the site's secure API endpoint.
     Set PUBLISH_DRY_RUN=true to simulate the publish without uploading.
     """
-    site_api_url = os.environ.get("SITE_API_URL", "https://buteforce.com/api/agent/blog")
+    site_api_url = os.environ.get("SITE_API_URL", "https://www.buteforce.com/api/agent/blog")
     secret_key = os.environ.get("AGENT_SECRET_KEY", "")
     dry_run = os.environ.get("PUBLISH_DRY_RUN", "true").lower() == "true"
 

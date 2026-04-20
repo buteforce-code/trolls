@@ -42,9 +42,8 @@ services:
       - key: APP_SECRET
         sync: false
       - key: SITE_API_URL
-        value: "https://buteforce.com/api/agent/blog"
+        value: "https://www.buteforce.com/api/agent/blog"
       - key: AGENT_SECRET_KEY
-        value: "dhyanesh"
+        sync: false
       - key: PUBLISH_DRY_RUN
-
         value: "false"
