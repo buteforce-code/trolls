@@ -34,6 +34,8 @@ from swarm.agents.research import make_research_agent
 from swarm.agents.writer import make_writer_agent
 from swarm.agents.humaniser import make_humaniser_agent
 from swarm.agents.publisher import make_publisher_agent
+from swarm.agents.imager import run_imaging
+from swarm.agents.linker import run_linking
 
 if os.name == "nt":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
@@ -153,7 +155,7 @@ class BlogOrchestrator:
         print(f"[research] Done. Status -> verifying_research", flush=True)
         return parsed
 
-    # ── Stage: Write + Humanise ──────────────────────────────────────────────
+    # ── Stage: Write → Humanise → Image → Link ──────────────────────────────
     def run_writing(self, topic_id: str, slug: str, title: str, feedback: str = "") -> dict:
         post = _get_post(topic_id)
         research_json = post.get("research_json", "{}")
@@ -173,14 +175,41 @@ class BlogOrchestrator:
         humaniser_prompt = (
             f"Humanise this draft blog post — make it sound exactly like Dhyan Karthik wrote it:\n\n{draft}"
         )
-        final = _run(self.humaniser_agent, humaniser_prompt, f"humaniser-{topic_id}")
+        humanised = _run(self.humaniser_agent, humaniser_prompt, f"humaniser-{topic_id}")
+        print(f"[writer] Humanised. Running imager...", flush=True)
 
-        word_count = len(final.split())
+        # Fetch topic tags for the image planner
+        topic_row = _db().table("topics").select("tags").eq("id", topic_id).limit(1).execute()
+        tags: list[str] = (topic_row.data[0].get("tags") or []) if topic_row.data else []
+        word_count_pre = len(humanised.split())
+
+        imaged_mdx, hero_image_url, images_meta = run_imaging(
+            mdx=humanised,
+            slug=slug,
+            title=title,
+            tags=tags,
+            word_count=word_count_pre,
+            model=self.model,
+            _run_agent_fn=_run,
+            session_id=topic_id,
+        )
+        print(f"[writer] Images done ({len(images_meta)} generated). Running linker...", flush=True)
+
+        linked_mdx = run_linking(
+            mdx=imaged_mdx,
+            research_json=research_json,
+            model=self.model,
+            _run_agent_fn=_run,
+            session_id=topic_id,
+        )
+        print(f"[writer] Links injected. Saving final draft...", flush=True)
+
+        word_count = len(linked_mdx.split())
 
         # Extract meta from front-matter
         meta_title = title
         meta_desc = ""
-        for line in final.split("\n"):
+        for line in linked_mdx.split("\n"):
             if line.startswith("title:"):
                 meta_title = line.replace("title:", "").strip().strip('"')
             if line.startswith("description:"):
@@ -188,10 +217,12 @@ class BlogOrchestrator:
 
         _upsert_post(topic_id, {
             "mdx_draft": draft,
-            "mdx_final": final,
+            "mdx_final": linked_mdx,
             "meta_title": meta_title,
             "meta_description": meta_desc,
             "word_count": word_count,
+            "hero_image_url": hero_image_url,
+            "images": json.dumps(images_meta),
         })
         _update_status(slug, "verifying_draft")
         print(f"[writer] Done. {word_count} words. Status -> verifying_draft", flush=True)
