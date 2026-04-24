@@ -1,14 +1,16 @@
 """
 Supabase schema bootstrap — idempotent.
 Run: python setup_db.py
+
+Uses a direct PostgreSQL connection (SUPABASE_DB_URL) instead of the PostgREST
+RPC layer, which requires a custom exec_sql function to be pre-installed.
 """
 import os
+import sys
+import psycopg2
 from dotenv import load_dotenv
-from supabase import create_client
 
 load_dotenv()
-
-supabase = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_SERVICE_KEY"])
 
 STATEMENTS = [
     # topics table
@@ -67,55 +69,57 @@ STATEMENTS = [
     """,
 ]
 
-if __name__ == "__main__":
-    print("Setting up Supabase schema...")
-    for i, stmt in enumerate(STATEMENTS):
+
+def _run_statements(db_url: str) -> bool:
+    conn = psycopg2.connect(db_url)
+    conn.autocommit = True
+    cur = conn.cursor()
+    total = len(STATEMENTS)
+    ok = True
+
+    for i, stmt in enumerate(STATEMENTS, 1):
         clean = stmt.strip()
         if not clean:
             continue
         try:
-            supabase.rpc("exec_sql", {"sql": clean}).execute()
-            print(f"  [{i+1}/{len(STATEMENTS)}] OK")
+            cur.execute(clean)
+            print(f"  [{i}/{total}] OK")
         except Exception as e:
-            err = str(e)
-            if "already exists" in err or "duplicate" in err.lower():
-                print(f"  [{i+1}/{len(STATEMENTS)}] SKIP (already exists)")
+            err = str(e).lower()
+            if "already exists" in err or "duplicate" in err:
+                print(f"  [{i}/{total}] SKIP (already exists)")
             else:
-                print(f"  [{i+1}/{len(STATEMENTS)}] ERROR: {err}")
+                print(f"  [{i}/{total}] ERROR: {e}")
+                ok = False
 
-    print("\nDone. Verifying tables...")
-    try:
-        r1 = supabase.table("topics").select("id").limit(1).execute()
-        r2 = supabase.table("blog_posts").select("id").limit(1).execute()
-        print("  ✓ topics table accessible")
-        print("  ✓ blog_posts table accessible")
-    except Exception as e:
-        print(f"  ✗ Verification failed: {e}")
-        print("  → Run the SQL manually in Supabase SQL Editor:")
-        print("""
-    CREATE TABLE IF NOT EXISTS topics (
-        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-        slug text UNIQUE NOT NULL,
-        title text NOT NULL,
-        status text NOT NULL DEFAULT 'queued',
-        tags text[] DEFAULT '{}',
-        created_at timestamptz DEFAULT now(),
-        updated_at timestamptz DEFAULT now()
-    );
+    cur.close()
+    conn.close()
+    return ok
 
-    CREATE TABLE IF NOT EXISTS blog_posts (
-        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-        topic_id uuid REFERENCES topics(id) ON DELETE CASCADE,
-        research_json text,
-        mdx_draft text,
-        mdx_final text,
-        meta_title text,
-        meta_description text,
-        published_url text,
-        published_at timestamptz,
-        word_count int DEFAULT 0,
-        rejection_log jsonb DEFAULT '[]',
-        created_at timestamptz DEFAULT now(),
-        updated_at timestamptz DEFAULT now()
-    );
-        """)
+
+def _verify(db_url: str) -> None:
+    conn = psycopg2.connect(db_url)
+    cur = conn.cursor()
+    for table in ("topics", "blog_posts"):
+        try:
+            cur.execute(f"SELECT count(*) FROM {table}")
+            cur.fetchone()
+            print(f"  [OK] {table}")
+        except Exception as e:
+            print(f"  [FAIL] {table}: {e}")
+    cur.close()
+    conn.close()
+
+
+if __name__ == "__main__":
+    db_url = os.environ.get("SUPABASE_DB_URL", "")
+    if not db_url:
+        print("ERROR: SUPABASE_DB_URL not set in .env")
+        sys.exit(1)
+
+    print("Setting up Supabase schema...")
+    _run_statements(db_url)
+
+    print("\nVerifying tables...")
+    _verify(db_url)
+    print("\nDone.")
