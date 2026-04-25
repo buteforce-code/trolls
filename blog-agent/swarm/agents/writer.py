@@ -7,7 +7,7 @@ from __future__ import annotations
 from typing import Any
 
 from google.adk.agents import LlmAgent
-from swarm.agents.brand_context import _brand_context
+from swarm.agents.brand_context import _brand_context, _seo_context
 
 
 def make_writer_agent(model: Any) -> LlmAgent:
@@ -22,6 +22,7 @@ industry blog posts for 40 years. You have seen every trend, every wave of hype,
 you are done with generic content.
 
 {_brand_context()}
+{_seo_context()}
 
 YOUR JOB:
 You will receive a structured research digest JSON. Use it as your source of truth.
@@ -37,7 +38,9 @@ Write a complete, long-form blog post (1,400–2,000 words) that:
 - Includes exactly 1 contrarian insight that makes readers stop and reconsider
 - Ends with a concrete, non-pushy call-to-action relevant to Buteforce
 - Weaves in at least 3 of the key_facts from research naturally
-- Targets 3-5 SEO keywords derived from the topic — use them naturally, not stuffed
+- Targets the strongest SEO keywords from the research digest — use them naturally, not stuffed
+- Keeps the primary keyword in the H1, meta description, and first 100 words
+- Uses at least one secondary keyword in an H2 if it fits naturally
 
 OUTPUT FORMAT — start the file with EXACTLY this frontmatter, nothing before it:
 ---
@@ -58,6 +61,7 @@ CRITICAL RULES:
 - No em-dash overuse. Max 2 per post.
 - No bullet lists as a crutch — make actual sentences
 - Write paragraphs like a journalist, not a consultant
+- Do not lose search intent while trying to sound clever
 - The reader should finish the post feeling like they learned something real
 """.strip(),
     )

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 type Topic = {
@@ -115,17 +116,20 @@ function TopicCard({ topic, onDelete }: { topic: Topic; onDelete: (slug: string)
 }
 
 // ── New Topic Modal ───────────────────────────────────────────────────────────
-function NewTopicModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+function NewTopicModal({ onClose, onCreated }: { onClose: () => void; onCreated: (topic: Topic) => void }) {
+  const router = useRouter()
   const [title, setTitle]     = useState('')
   const [tags, setTags]       = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError]     = useState('')
+  const [statusText, setStatusText] = useState('')
 
   async function submit(e: { preventDefault(): void }) {
     e.preventDefault()
     if (!title.trim()) return
     setLoading(true)
     setError('')
+    setStatusText('Starting the research pipeline on the server...')
     try {
       const res = await fetch('/api/run', {
         method: 'POST',
@@ -134,9 +138,29 @@ function NewTopicModal({ onClose, onCreated }: { onClose: () => void; onCreated:
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Failed to start')
-      // Brief pause so Python has time to create the topic record in Supabase
-      await new Promise(r => setTimeout(r, 1500))
-      onCreated()
+      const slug = data.slug as string
+      const optimisticTopic: Topic = {
+        id: `pending:${slug}`,
+        slug,
+        title: title.trim(),
+        status: 'queued',
+        tags: tags.split(',').map(t => t.trim()).filter(Boolean),
+        updated_at: new Date().toISOString(),
+      }
+      onCreated(optimisticTopic)
+      setStatusText(`Job queued as /${slug}. Waiting for the topic record...`)
+
+      for (let attempt = 0; attempt < 15; attempt += 1) {
+        await new Promise(r => setTimeout(r, 1000))
+        const topicRes = await fetch(`/api/topic/${slug}`)
+        if (topicRes.ok) {
+          router.push(`/topic/${slug}`)
+          onClose()
+          return
+        }
+      }
+
+      setStatusText(`Job started as /${slug}. The dashboard will refresh automatically if it takes longer to appear.`)
       onClose()
     } catch (err: any) {
       setError(err.message)
@@ -170,7 +194,11 @@ function NewTopicModal({ onClose, onCreated }: { onClose: () => void; onCreated:
             />
             <div className="field-hint">Used for filtering and blog taxonomy.</div>
           </div>
+          {statusText && <div style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 12 }}>{statusText}</div>}
           {error && <div style={{ color: 'var(--red)', fontSize: 13, marginBottom: 12 }}>{error}</div>}
+          <div style={{ color: 'var(--text-muted)', fontSize: 12, marginBottom: 12 }}>
+            Raw execution logs appear in the server logs, not in the browser console.
+          </div>
           <div className="modal-actions">
             <button type="button" className="btn btn-outline" onClick={onClose} disabled={loading}>Cancel</button>
             <button type="submit" className="btn btn-primary" disabled={loading || !title.trim()}>
@@ -207,6 +235,10 @@ export default function Dashboard() {
 
   const handleDelete = (slug: string) => {
     setTopics(prev => prev.filter(t => t.slug !== slug))
+  }
+
+  const handleCreated = (topic: Topic) => {
+    setTopics(prev => [topic, ...prev.filter(existing => existing.slug !== topic.slug)])
   }
 
   const allTags  = Array.from(new Set(topics.flatMap(t => t.tags || [])))
@@ -280,7 +312,7 @@ export default function Dashboard() {
       {modal && (
         <NewTopicModal
           onClose={() => setModal(false)}
-          onCreated={load}
+          onCreated={handleCreated}
         />
       )}
     </main>

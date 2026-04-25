@@ -31,6 +31,11 @@ Environment:
 - Copy `.env.example` to `.env` in `blog-agent/`
 - Copy `.env.example` to `dashboard/.env.local` (or map only required keys)
 
+Runtime visibility:
+
+- The browser console will not show Python pipeline logs. `run.py` runs on the server, so raw stdout/stderr appears in server logs.
+- The dashboard should show pipeline status changes in-app. For production debugging, check the Render service logs.
+
 Start dashboard:
 
 ```powershell

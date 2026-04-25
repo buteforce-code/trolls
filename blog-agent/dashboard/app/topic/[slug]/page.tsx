@@ -78,6 +78,14 @@ export default function TopicPage({ params }: { params: Promise<{ slug: string }
   const needsReview = ['verifying_research', 'verifying_draft'].includes(topic.status)
   const isFailed    = topic.status === 'failed'
   const isPublished = topic.status === 'published'
+  const isRunning   = ['queued', 'researching', 'writing', 'publishing'].includes(topic.status)
+
+  const statusHelp: Record<string, string> = {
+    queued: 'The job has been accepted and should begin shortly.',
+    researching: 'The agent is gathering site context and external sources.',
+    writing: 'The writer, humaniser, image pipeline, and linker are running.',
+    publishing: 'The approved post is being pushed live.',
+  }
 
   let digest = null
   try { digest = post?.research_json ? JSON.parse(post.research_json) : null } catch {}
@@ -278,6 +286,16 @@ export default function TopicPage({ params }: { params: Promise<{ slug: string }
             <span className="badge badge-queued">{topic.slug}</span>
             {(topic.tags || []).map((t: string) => <span key={t} className="tag">{t}</span>)}
           </div>
+
+          {isRunning && (
+            <div className="card" style={{ marginBottom: 20, borderColor: 'rgba(245,158,11,0.22)', background: 'rgba(245,158,11,0.05)' }}>
+              <div style={{ fontWeight: 700, marginBottom: 6 }}>Pipeline running in background</div>
+              <div style={{ color: 'var(--text-muted)', fontSize: 14, lineHeight: 1.6 }}>
+                {statusHelp[topic.status] || 'The agent is working.'} This page refreshes automatically every few seconds.
+                Raw execution logs appear in the Render service logs, not in the browser console.
+              </div>
+            </div>
+          )}
 
           {/* Research Digest */}
           {digest && (topic.status === 'verifying_research' || topic.status === 'writing' || (isFailed && !post?.mdx_final)) && (
