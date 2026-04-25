@@ -4,7 +4,8 @@ services:
     runtime: node
     rootDir: blog-agent/dashboard
     buildCommand: python -m pip install -r ../requirements.txt && npm ci && npm run build
-    startCommand: npm run start
+    # Write GCP credentials JSON from env var to temp file before starting
+    startCommand: bash -c 'echo "$GOOGLE_CREDENTIALS_JSON" > /tmp/gcp-creds.json && npm run start'
     healthCheckPath: /
     envVars:
       - key: GOOGLE_AI_API_KEY
@@ -12,13 +13,17 @@ services:
       - key: GEMINI_API_KEY
         sync: false
       - key: GOOGLE_GENAI_USE_VERTEXAI
-        value: "false"
+        value: "true"
       - key: GOOGLE_CLOUD_PROJECT
-        sync: false
+        value: buteforce
       - key: GOOGLE_CLOUD_LOCATION
         value: us-central1
       - key: GOOGLE_APPLICATION_CREDENTIALS
+        value: /tmp/gcp-creds.json
+      - key: GOOGLE_CREDENTIALS_JSON
         sync: false
+      - key: IMAGEN_MODEL
+        value: imagen-3.0-generate-001
       - key: ADK_GEMINI_MODEL
         value: gemini-2.5-flash
       - key: PYTHONUTF8
@@ -32,6 +37,8 @@ services:
       - key: SUPABASE_SERVICE_KEY
         sync: false
       - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_DB_URL
         sync: false
       - key: NEXT_PUBLIC_SUPABASE_URL
         sync: false
