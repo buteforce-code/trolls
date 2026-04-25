@@ -4,17 +4,17 @@
     "type": "split",
     "children": [
       {
-        "id": "0032cabe4f8a241c",
+        "id": "32111b5c64500111",
         "type": "tabs",
         "children": [
           {
-            "id": "512f4d3f21e775c4",
+            "id": "5eee7ec0cfc7b756",
             "type": "leaf",
             "state": {
-              "type": "empty",
+              "type": "graph",
               "state": {},
-              "icon": "lucide-file",
-              "title": "New tab"
+              "icon": "lucide-git-fork",
+              "title": "Graph view"
             }
           }
         ]
@@ -49,7 +49,7 @@
             "state": {
               "type": "search",
               "state": {
-                "query": "tag:#graphify/document",
+                "query": "",
                 "matchingCase": false,
                 "explainSearch": false,
                 "collapseAll": false,
@@ -177,8 +177,12 @@
       "bases:Create new base": false
     }
   },
-  "active": "512f4d3f21e775c4",
+  "active": "5eee7ec0cfc7b756",
   "lastOpenFiles": [
+    "Untitled 1.canvas",
+    "Untitled.canvas",
+    "2026-04-20.md",
+    "graphify-out/obsidian/DesignerAgent (Swarm Sub-agent).md",
     "graphify-out/obsidian/Brand Name Buteforce.md",
     "graphify-out/obsidian/Accent Color Yellow FFFC01.md",
     "graphify-out/obsidian/LinkedIn Personal Brand Channel.md",
@@ -187,7 +191,6 @@
     "graphify-out/cache/59895b4fc1c1118ed5aedc06e04e85be6b1464d4ef1b832d1a37fa079f6d9390.json",
     "graphify-out/cache/361fb645a3cc6f4a2e488fa378ec887ef89e79fa26b89ffbff61c2ca2ce4494a.json",
     "graphify-out/obsidian/Campaign Rules.md",
-    "graphify-out/obsidian/DesignerAgent (Swarm Sub-agent).md",
     "graphify-out/obsidian/HumaniserAgent (Brand Voice Filter).md",
     "graphify-out/obsidian/WriterAgent (Swarm Sub-agent).md",
     "graphify-out/obsidian/ResearchAgent (Swarm Sub-agent).md",
@@ -206,8 +209,6 @@
     "graphify-out/obsidian/Project Plans Index Section.md",
     "graphify-out/obsidian/Proof Points Summary Table.md",
     "graphify-out/obsidian/Organic SEO Lead Source.md",
-    "graphify-out/obsidian/obsidian-vault MCP Server.md",
-    "graphify-out/obsidian/Mistral 7B LLM.md",
     "graphify-out/obsidian",
     "graphify-out/graph.html",
     "graphify-out/graph.json",

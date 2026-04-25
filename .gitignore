@@ -2,3 +2,4 @@ zDocuments/
 zlog.txt
 zlogs.txt
 .env*
+.claude/settings.local.json

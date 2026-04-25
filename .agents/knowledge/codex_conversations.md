@@ -20,7 +20,93 @@ Do not use this file as the source of truth for stable facts if a better knowled
 - **New topic timing**: After clicking "+ New Topic", the new card appears after ~1.5s delay. Normal — Python writes to Supabase then polling picks it up.
 - **Dev server restart**: After heavy bash testing sessions, restart with Ctrl+C → `npm run dev` to clear stuck TCP connections.
 
+- **Lead Outreacher review app NEXT**: `review_app/` now generates successfully through Gemini (`gemini-2.5-pro`) and runs in an isolated local `.venv`. Remaining step is adding `SMTP_PASS` so `Approve & Send` works end-to-end.
+
 ## Session Log
+
+### 2026-04-22 - Lead Outreacher review_app verification + Gemini migration plan
+
+**Project:** `D:\Projects\Buteforce\Projects\Lead Outreacher`
+
+**Work done:**
+1. Started the local `review_app` server and verified the UI loads at `http://127.0.0.1:8765`.
+2. Confirmed the current blocker is credential/provider-side: `review_app/.env` is missing and `Generate email` fails without `ANTHROPIC_API_KEY`.
+3. Checked the wider Buteforce stack and found the existing pattern already favors Gemini in lightweight Python tools and records Vertex friction for local Windows flows.
+4. Chose the recommended migration path: replace Anthropic in `review_app/generator.py` with Google Gemini Developer API (`google-genai`, server-side key auth), while leaving SMTP send logic unchanged.
+
+**Next:**
+- Create or reuse a Gemini API key in Google AI Studio and link Cloud Billing if paid quota is needed.
+- Patch `review_app` to use Gemini, update `.env.example`, and replace the launcher check.
+- Re-test the full flow: generate -> edit -> approve/send.
+
+---
+
+### 2026-04-22 - Lead Outreacher review_app Gemini migration completed
+
+**Project:** `D:\Projects\Buteforce\Projects\Lead Outreacher`
+
+**Work done:**
+1. Replaced Anthropic in `review_app/generator.py` with the official `google-genai` SDK.
+2. Chose stable `gemini-2.5-pro` as the default model to protect draft quality during the provider swap.
+3. Added structured JSON enforcement for `subject` and `body`, plus a fallback extractor for SDK responses where `response.text` is empty.
+4. Updated `.env.example` and configured local `.env` for Gemini.
+5. Updated `start_review.bat` to use an isolated `review_app/.venv` instead of installing into the global Python environment.
+6. Verified the app end-to-end for generation: root page returned 200 and `POST /api/generate/6` returned 200.
+
+**Next:**
+- Add `SMTP_PASS` in `review_app/.env`.
+- Re-test `Approve & Send`.
+
+---
+
+### 2026-04-20 — Harvard Algorithmic Trading with AI — Full Setup + Binance Paper Stack
+
+**Project:** `D:\Projects\Fintech\Harvard-Algorithmic-Trading-with-AI`
+**Source repo:** https://github.com/moondevonyt/Harvard-Algorithmic-Trading-with-AI
+
+**Work done:**
+
+1. **Repo cloned and environment set up:**
+   - Python 3.10 venv at `venv/`
+   - All dependencies installed: pandas, numpy, TA-Lib (prebuilt Windows wheel), backtesting, yfinance, ccxt, hyperliquid-python-sdk, eth-account, dash, plotly
+   - `pandas-ta` not available for Python 3.10 — import guarded with try/except in `nice_funcs.py`
+
+2. **Hardcoded Mac paths fixed** in all three scripts:
+   - `backtest/template.py` — now uses `os.path.dirname(__file__)`
+   - `backtest/bb_squeeze_adx.py` — same
+   - `backtest/data.py` — same
+
+3. **Backtests confirmed working:**
+   - `bb_squeeze_adx.py` ran full optimization on BTC 6h data
+   - Best params found: BB=10, KC=15, ADX=10, TP=3%, SL=2%
+
+4. **Binance paper trading stack built** (replaces Hyperliquid, no deposit needed):
+   - `implement/paper_engine.py` — local position/PnL tracker, persists to `paper_state.json`
+   - `implement/nice_funcs_binance.py` — drop-in replacement for `nice_funcs.py`, same API signatures
+   - `implement/ws_feed.py` — Binance WebSocket feed (no auth), `LATEST_TICK` + `OHLCV_BUFFER` for agents
+   - `implement/bot_binance.py` — same BB Squeeze ADX strategy on Binance data, paper execution
+   - `implement/dashboard.py` — Plotly Dash live chart at http://localhost:8050
+
+5. **Live data confirmed:** BTC ask/bid streaming at `$75,083`, OHLCV from Binance public API
+
+**How to run:**
+```bash
+# Backtest (historical)
+cd backtest && PYTHONUTF8=1 ../venv/Scripts/python bb_squeeze_adx.py
+
+# Paper bot (live, no deposit)
+cd implement && PYTHONUTF8=1 ../venv/Scripts/python bot_binance.py
+
+# Live dashboard (open http://localhost:8050)
+cd implement && PYTHONUTF8=1 ../venv/Scripts/python dashboard.py
+```
+
+**Next for this project:**
+- Wire up WebSocket feed (`ws_feed.py`) into the bot for sub-minute data
+- Add multi-symbol scanning to the bot
+- Connect agents to `LATEST_TICK` / `OHLCV_BUFFER` for autonomous trading decisions
+
+---
 
 ### 2026-04-19 — Blog Agent to Live Site API Integration
 

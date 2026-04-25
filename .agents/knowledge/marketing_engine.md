@@ -1,7 +1,7 @@
 ---
 links: "[[INDEX]] | [[dhyan_psychology]] | [[founder]] | [[brand_bible]] | [[tech_stack]]"
 type: operations
-last-updated: 2026-04-15
+last-updated: 2026-04-22
 ---
 
 # Marketing Engine — Buteforce Lead Generation System
@@ -90,6 +90,16 @@ Telegram / Website → SwarmOrchestrator (Google ADK)
 
 ---
 
+## Tier 1 Manual Outreach
+
+- High-value Tier 1 leads are handled in a local manual review tool at `Projects/Lead Outreacher/review_app`.
+- Flow: select lead -> generate draft -> edit subject/body -> approve and send -> sync back to `outreach_tracker.csv`.
+- Leads with no email stay blocked in the UI until enrichment is completed.
+- `review_app` now generates drafts through Gemini Developer API with `gemini-2.5-pro` as the quality-first default model.
+- Remaining blocker as of 2026-04-22: SMTP send still requires `SMTP_PASS` in `review_app/.env`.
+
+---
+
 ## Current Status (April 2026)
 - [x] Lead database populated in Supabase — 154 Upwork leads ingested as `intake` campaigns
 - [x] Google ADK swarm built — Orchestrator + 4 sub-agents (Research, Writer, Humaniser, Designer)
@@ -112,6 +122,9 @@ Telegram / Website → SwarmOrchestrator (Google ADK)
 - [ ] Create individual service landing pages: /services/computer-vision, /services/document-ai, /services/ai-agents
 - [ ] Publish Blog Post #1 (written, needs MDX format + GITHUB_REPO env var)
 - [ ] Expand case study pages /work/[slug] with 300–500 word write-ups (currently thin content)
+
+- [x] Tier 1 review UI built locally in `review_app/` for manual draft review and send flow
+- [x] Migrate `review_app/generator.py` from Anthropic to Gemini Developer API so Tier 1 manual outreach can generate drafts without Anthropic credits
 
 ## Telegram Control Commands
 - Send any **topic** → Orchestrator starts the full pipeline

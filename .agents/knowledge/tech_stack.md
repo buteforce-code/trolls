@@ -1,7 +1,7 @@
 ---
 links: "[[INDEX]] | [[dhyan_psychology]] | [[founder]] | [[brand_bible]] | [[marketing_engine]]"
 type: technical
-last-updated: 2026-04-15
+last-updated: 2026-04-22
 ---
 
 # Tech Stack — Buteforce Systems
@@ -14,7 +14,7 @@ last-updated: 2026-04-15
 | Layer | Technology | Notes |
 |---|---|---|
 | Framework | Next.js 15 (App Router) | React 19, latest stable |
-| Styling | TailwindCSS v3 | Custom design tokens, dark-only |
+| Styling | TailwindCSS v3 | Custom design tokens, light-first brand rule; dark mode is being removed |
 | CMS | TinaCMS | Headless, Git-backed content |
 | Animations | Framer Motion v11 | All micro-animations |
 | Icons | Lucide React | Consistent icon set |
@@ -47,12 +47,42 @@ last-updated: 2026-04-15
 | Supabase | Primary database (Postgres + Auth + Storage) → [[marketing_engine#Outreach Pipeline Architecture]] |
 | YOLOv8 | Object detection in computer vision projects |
 | PaddleOCR | Document text extraction |
-| Claude API | LLM reasoning tasks |
+| Claude API | Legacy or older-tool LLM integration only |
 | Mistral | Lightweight LLM for classification |
 | OpenAI API | Embeddings and GPT tasks |
-| Google Gemini (ADK) | Primary reasoning engine for autonomous agents (`gemini-2.5-flash`) via Google AI Studio |
+| Google Gemini | Preferred reasoning engine for autonomous agents and lightweight server-side tools via Google AI Studio / Gen AI SDK |
 | Telegram Bot API | Real-time operation notifications |
 | n8n | Workflow automation (some pipelines) |
+
+---
+
+## Lead Outreacher Review App (d:\Projects\Buteforce\Projects\Lead Outreacher\review_app)
+
+> Manual review-and-send tool for high-value Tier 1 outreach.
+> Last updated: 2026-04-22
+
+| Layer | Technology | Notes |
+|---|---|---|
+| Backend | FastAPI + uvicorn | Local review server at `http://127.0.0.1:8765` |
+| UI | Server-rendered HTML | Sidebar queue, editable subject/body, send/skip/reset |
+| Queue State | JSON + CSV sync | `queue_store.py` keeps queue state aligned with `outreach_tracker.csv` |
+| Draft Generation | Gemini Developer API | `generator.py` now uses the official `google-genai` SDK with structured JSON output and a quality-first default model (`gemini-2.5-pro`) |
+| Email Delivery | SMTP | Google Workspace app password via `SMTP_PASS` |
+
+### Key File Paths
+- `Projects/Lead Outreacher/review_app/app.py` - FastAPI routes and local server entry
+- `Projects/Lead Outreacher/review_app/generator.py` - outreach draft generation
+- `Projects/Lead Outreacher/review_app/mailer.py` - SMTP send path
+- `Projects/Lead Outreacher/review_app/queue_store.py` - queue persistence + `outreach_tracker.csv` sync
+- `Projects/Lead Outreacher/review_app/templates/index.html` - review UI
+- `Projects/Lead Outreacher/start_review.bat` - local launcher
+
+### Environment
+- `review_app/.env` is required before the launcher should be considered production-ready
+- Active setup: `GEMINI_API_KEY` with `GEMINI_MODEL=gemini-2.5-pro`
+- Optional compatibility alias: `GOOGLE_AI_API_KEY` to match other Buteforce Python scripts
+- Prefer Google AI Studio API-key auth over Vertex AI / ADC for this tool because it is a small local server-side app and other Buteforce notes already record Vertex friction in similar Windows-based workflows
+- `start_review.bat` now creates and uses `review_app/.venv` so app dependencies stay isolated from the rest of the machine
 
 ---
 

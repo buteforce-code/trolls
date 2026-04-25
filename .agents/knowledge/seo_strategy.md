@@ -13,14 +13,17 @@ last-updated: 2026-04-15
 
 ---
 
-## ⚠️ Critical: Site Not Indexed
-As of 2026-04-15, buteforce.com returns zero results in Google (`site:buteforce.com` = 0). All SEO work has zero search equity until indexing is fixed. **First action: submit to Google Search Console and request indexing.**
+## ⚠️ GSC Issue: Page With Redirect (Resolved 2026-04-24)
+GSC reported "Page with redirect" validation failure — Googlebot was crawling `http://buteforce.com/` (HTTP) which redirected to HTTPS.
 
-Steps:
-1. Go to search.google.com/search-console → add buteforce.com property
-2. Submit `buteforce.com/sitemap.xml`
-3. Manually request indexing for homepage + `/lp/ai-audit` + all service pages
-4. Repeat for Bing Webmaster Tools (feeds DuckDuckGo, underrated for B2B)
+**Fix applied (commit eefd461):**
+- Added explicit 301 redirects in `next.config.ts` for `http://` → `https://` (via `x-forwarded-proto` header) and `www.buteforce.com` → `buteforce.com`
+- Fixed `app/sitemap.ts`: replaced dynamic `new Date()` lastModified (was marking all pages as freshly modified on every deploy) with fixed content-accurate dates
+
+**Next steps:**
+1. After Vercel deploys (2–3 min), go to GSC → Indexing → Pages → "Page with redirect" → click **Validate Fix**
+2. Re-submit sitemap: GSC → Sitemaps → `buteforce.com/sitemap.xml` → Resubmit
+3. Request indexing for key pages: homepage, /services, /work, /lp/ai-audit
 
 ---
 
