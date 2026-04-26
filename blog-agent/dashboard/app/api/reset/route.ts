@@ -6,6 +6,6 @@ export async function POST(request: Request) {
   const { slug } = body
   if (!slug) return NextResponse.json({ error: 'Slug is required' }, { status: 400 })
 
-  const { pid } = spawnPythonJob(['--reset', slug], `reset:${slug}`)
+  const { pid } = spawnPythonJob(['--reset', slug], `reset:${slug}`, slug)
   return NextResponse.json({ success: true, pid })
 }

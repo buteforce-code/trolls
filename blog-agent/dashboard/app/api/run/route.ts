@@ -11,7 +11,7 @@ export async function POST(request: Request) {
   const slug = slugifyTopic(title)
 
   console.log(`Starting run.py for topic: ${title} (${slug})`)
-  const { pid } = spawnPythonJob(['--topic', title, '--tags', tagsStr], `run:${slug}`)
+  const { pid } = spawnPythonJob(['--topic', title, '--tags', tagsStr], `run:${slug}`, slug)
 
   return NextResponse.json({ success: true, slug, pid })
 }

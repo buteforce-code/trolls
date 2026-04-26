@@ -9,6 +9,6 @@ export async function POST(request: Request) {
   
   console.log(`Approving stage for topic: ${slug}`)
 
-  const { pid } = spawnPythonJob(['--approve', slug], `approve:${slug}`)
+  const { pid } = spawnPythonJob(['--approve', slug], `approve:${slug}`, slug)
   return NextResponse.json({ success: true, pid })
 }

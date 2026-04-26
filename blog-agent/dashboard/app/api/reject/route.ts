@@ -11,6 +11,6 @@ export async function POST(request: Request) {
   
   console.log(`Rejecting stage for topic: ${slug} with feedback`)
 
-  const { pid } = spawnPythonJob(['--reject', slug, '--feedback', feedback || ''], `reject:${slug}`)
+  const { pid } = spawnPythonJob(['--reject', slug, '--feedback', feedback || ''], `reject:${slug}`, slug)
   return NextResponse.json({ success: true, pid })
 }

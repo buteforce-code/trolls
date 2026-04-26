@@ -36,6 +36,8 @@ export default function TopicPage({ params }: { params: Promise<{ slug: string }
   const [showReject, setShowReject]     = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [feedback, setFeedback]         = useState('')
+  const [logLines, setLogLines]         = useState<string[]>([])
+  const logCursorRef = useRef(0)
   const mountedRef = useRef(true)
 
   const load = useCallback(async () => {
@@ -63,13 +65,33 @@ export default function TopicPage({ params }: { params: Promise<{ slug: string }
     const iv = setInterval(() => {
       setTopic((t: any) => {
         if (!t) return t
-        const active = ['researching', 'writing', 'publishing'].includes(t.status)
+        const active = ['queued', 'researching', 'writing', 'publishing'].includes(t.status)
         if (active) load()
         return t
       })
     }, 4000)
     return () => clearInterval(iv)
   }, [load])
+
+  // Poll job logs (always on — file may exist for completed/failed jobs too)
+  useEffect(() => {
+    let cancelled = false
+    const fetchLogs = async () => {
+      try {
+        const res = await fetch(`/api/topic/${slug}/logs?after=${logCursorRef.current}`)
+        if (!res.ok || cancelled) return
+        const data = await res.json()
+        if (cancelled) return
+        if (Array.isArray(data.lines) && data.lines.length > 0) {
+          setLogLines(prev => [...prev, ...data.lines].slice(-500))
+        }
+        if (typeof data.totalBytes === 'number') logCursorRef.current = data.totalBytes
+      } catch {}
+    }
+    fetchLogs()
+    const iv = setInterval(fetchLogs, 3000)
+    return () => { cancelled = true; clearInterval(iv) }
+  }, [slug])
 
   if (loading || !topic) {
     return <div className="empty">Loading...</div>
@@ -79,6 +101,12 @@ export default function TopicPage({ params }: { params: Promise<{ slug: string }
   const isFailed    = topic.status === 'failed'
   const isPublished = topic.status === 'published'
   const isRunning   = ['queued', 'researching', 'writing', 'publishing'].includes(topic.status)
+
+  // Stuck detection — running but updated_at hasn't moved in >5 min
+  const STUCK_THRESHOLD_MS = 5 * 60 * 1000
+  const updatedMs = topic.updated_at ? new Date(topic.updated_at).getTime() : 0
+  const ageMs = updatedMs ? Date.now() - updatedMs : 0
+  const isStuck = isRunning && ageMs > STUCK_THRESHOLD_MS
 
   const statusHelp: Record<string, string> = {
     queued: 'The job has been accepted and should begin shortly.',
@@ -287,13 +315,76 @@ export default function TopicPage({ params }: { params: Promise<{ slug: string }
             {(topic.tags || []).map((t: string) => <span key={t} className="tag">{t}</span>)}
           </div>
 
-          {isRunning && (
+          {isRunning && !isStuck && (
             <div className="card" style={{ marginBottom: 20, borderColor: 'rgba(245,158,11,0.22)', background: 'rgba(245,158,11,0.05)' }}>
               <div style={{ fontWeight: 700, marginBottom: 6 }}>Pipeline running in background</div>
               <div style={{ color: 'var(--text-muted)', fontSize: 14, lineHeight: 1.6 }}>
                 {statusHelp[topic.status] || 'The agent is working.'} This page refreshes automatically every few seconds.
-                Raw execution logs appear in the Render service logs, not in the browser console.
+                Live job output is shown below.
               </div>
+            </div>
+          )}
+
+          {isStuck && (
+            <div className="card" style={{ marginBottom: 20, borderColor: 'rgba(220,38,38,0.25)', background: 'rgba(220,38,38,0.06)' }}>
+              <div style={{ fontWeight: 700, marginBottom: 6, color: 'var(--red)' }}>
+                Pipeline appears stuck
+              </div>
+              <div style={{ color: 'var(--text-muted)', fontSize: 14, lineHeight: 1.6, marginBottom: 12 }}>
+                Status is <code>{topic.status}</code> but no progress in {Math.floor(ageMs / 60000)} min.
+                The Python worker likely crashed before updating the database. Check the logs below, then retry or delete.
+              </div>
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                <button className="btn btn-primary btn-sm" onClick={handleRetryResearch} disabled={actionLoading}>
+                  {actionLoading ? <><span className="spinner" /> Starting...</> : '↺ Re-run from scratch'}
+                </button>
+                <button
+                  className="btn btn-sm btn-outline"
+                  style={{ color: 'var(--red)', borderColor: 'rgba(220,38,38,0.3)' }}
+                  onClick={() => setShowDeleteConfirm(true)}
+                  disabled={actionLoading}
+                >
+                  Delete topic
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Live job logs */}
+          {(isRunning || isFailed || logLines.length > 0) && (
+            <div className="card" style={{ marginBottom: 20, padding: 0, overflow: 'hidden' }}>
+              <div style={{
+                padding: '10px 14px',
+                borderBottom: '1px solid var(--border)',
+                fontSize: 12,
+                fontWeight: 700,
+                letterSpacing: 0.5,
+                textTransform: 'uppercase',
+                color: 'var(--text-muted)',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+              }}>
+                <span>Job Logs {isRunning && <span style={{ color: 'var(--green, #16a34a)', fontWeight: 600 }}>● live</span>}</span>
+                <span style={{ fontWeight: 400 }}>{logLines.length} line{logLines.length === 1 ? '' : 's'}</span>
+              </div>
+              <pre style={{
+                margin: 0,
+                padding: '12px 14px',
+                background: '#0a0a0a',
+                color: '#d4d4d8',
+                fontSize: 12,
+                lineHeight: 1.5,
+                fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+                maxHeight: 320,
+                overflow: 'auto',
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-word',
+              }}>
+                {logLines.length === 0
+                  ? '(no log output yet — file may not exist or job has not produced output)'
+                  : logLines.join('\n')}
+              </pre>
             </div>
           )}
 
