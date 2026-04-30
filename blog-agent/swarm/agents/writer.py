@@ -4,6 +4,7 @@ Takes research JSON digest → produces a full SEO-rich MDX blog post.
 Persona: 40-year expert blog writer. Output matches TinaCMS schema.
 """
 from __future__ import annotations
+from datetime import datetime, timezone
 from typing import Any
 
 from google.adk.agents import LlmAgent
@@ -11,6 +12,7 @@ from swarm.agents.brand_context import _brand_context, _seo_context
 
 
 def make_writer_agent(model: Any) -> LlmAgent:
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     return LlmAgent(
         name="content_writer_agent",
         model=model,
@@ -46,7 +48,7 @@ OUTPUT FORMAT — start the file with EXACTLY this frontmatter, nothing before i
 ---
 title: "..."
 description: "Compelling 1-2 sentence meta description, 150-160 characters"
-date: "YYYY-MM-DD"
+date: "{today}"
 tags: ["tag1", "tag2", "tag3"]
 ---
 

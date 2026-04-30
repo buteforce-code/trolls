@@ -5,6 +5,7 @@ Also reads existing Buteforce blog posts and brand data to prevent duplication.
 Synthesizes findings into a structured JSON digest.
 """
 from __future__ import annotations
+from datetime import datetime, timezone
 from typing import Any
 
 from google.adk.agents import LlmAgent
@@ -28,6 +29,8 @@ def make_research_agent(model: Any) -> LlmAgent:
     Multi-source research agent with site awareness.
     Reads all 7 external sources PLUS existing site content before synthesizing.
     """
+    now = datetime.now(timezone.utc)
+    current_month_year = now.strftime("%B %Y")
     return LlmAgent(
         name="research_agent",
         model=model,
@@ -59,7 +62,7 @@ No markdown wrapper. No preamble. Output ONLY the raw JSON object.
 
 {{
   "topic": "...",
-  "summary": "2-3 sentences: what this topic is and why it matters RIGHT NOW in April 2026. Be specific — cite real numbers if you found them.",
+  "summary": "2-3 sentences: what this topic is and why it matters RIGHT NOW in {current_month_year}. Be specific — cite real numbers if you found them.",
   "what_people_say": "What the actual online discourse looks like. Include real tone: frustrated? hopeful? skeptical? Quote the vibe, not a sanitized summary.",
   "dominant_sentiment": "excited | frustrated | skeptical | hopeful | mixed",
   "key_facts": [

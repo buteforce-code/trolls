@@ -9,8 +9,9 @@ import asyncio
 import io
 import json
 import os
+import re
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -203,6 +204,9 @@ class BlogOrchestrator:
             session_id=topic_id,
         )
         print(f"[writer] Links injected. Saving final draft...", flush=True)
+
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        linked_mdx = re.sub(r'(?m)^date:.*$', f'date: "{today}"', linked_mdx, count=1)
 
         word_count = len(linked_mdx.split())
 
