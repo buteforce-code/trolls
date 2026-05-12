@@ -132,28 +132,92 @@ class BlogOrchestrator:
         self.publisher_agent = make_publisher_agent(self.model)
 
     # ── Stage: Research ──────────────────────────────────────────────────────
+    REQUIRED_DIGEST_FIELDS = (
+        "summary", "what_people_say", "buteforce_angle", "key_facts", "source_signals",
+    )
+
+    def _extract_digest(self, raw: str, title: str) -> dict:
+        """Robust JSON extraction from agent output.
+        Handles markdown fences, leading commentary, and braces inside strings.
+        """
+        if not raw or not raw.strip():
+            return {"topic": title, "_parse_error": "empty agent output", "raw": ""}
+
+        # Strip ```json ... ``` or ``` ... ``` fences
+        fenced = re.search(r"```(?:json)?\s*(\{[\s\S]*?\})\s*```", raw)
+        candidate = fenced.group(1) if fenced else None
+
+        # Fallback: balanced-brace scan starting from first '{'
+        if not candidate:
+            start = raw.find("{")
+            if start < 0:
+                return {"topic": title, "_parse_error": "no JSON object found", "raw": raw[:2000]}
+            depth = 0
+            end = -1
+            in_str = False
+            esc = False
+            for i, ch in enumerate(raw[start:], start=start):
+                if esc:
+                    esc = False
+                    continue
+                if ch == "\\" and in_str:
+                    esc = True
+                    continue
+                if ch == '"':
+                    in_str = not in_str
+                    continue
+                if in_str:
+                    continue
+                if ch == "{":
+                    depth += 1
+                elif ch == "}":
+                    depth -= 1
+                    if depth == 0:
+                        end = i + 1
+                        break
+            candidate = raw[start:end] if end > 0 else raw[start:]
+
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError as exc:
+            return {"topic": title, "_parse_error": f"JSON decode: {exc}", "raw": raw[:2000]}
+
     def run_research(self, topic_id: str, slug: str, title: str, tags: list[str]) -> dict:
         print(f"\n[research] Starting multi-source research for: {title}", flush=True)
         _update_status(slug, "researching")
 
-        prompt = f"Research this topic thoroughly using all available tools:\n\nTopic: {title}\nTags: {', '.join(tags)}"
-        raw = _run(self.research_agent, prompt, f"research-{topic_id}")
+        prompt = (
+            f"Research this topic thoroughly using all available tools:\n\n"
+            f"Topic: {title}\nTags: {', '.join(tags)}"
+        )
 
-        # Extract JSON from response
-        start = raw.find("{")
-        end = raw.rfind("}") + 1
-        research_json = raw[start:end] if start >= 0 else raw
+        parsed: dict = {}
+        for attempt in range(2):
+            raw = _run(self.research_agent, prompt, f"research-{topic_id}-{attempt}")
+            print(f"[research] Agent output: {len(raw)} chars (attempt {attempt + 1})", flush=True)
+            parsed = self._extract_digest(raw, title)
+            missing = [f for f in self.REQUIRED_DIGEST_FIELDS if not parsed.get(f)]
+            if not missing and "_parse_error" not in parsed:
+                break
+            print(f"[research] Incomplete digest — missing {missing or 'parse error'}. "
+                  f"{'Retrying' if attempt == 0 else 'Giving up'}.", flush=True)
+            prompt = (
+                f"Your previous output was missing fields: {missing or 'unparseable JSON'}.\n"
+                f"Re-do the research and return ONLY the raw JSON object with ALL required fields populated.\n"
+                f"No markdown fences. No commentary.\n\n"
+                f"Topic: {title}\nTags: {', '.join(tags)}"
+            )
 
-        # Validate it's parseable
-        try:
-            parsed = json.loads(research_json)
-        except json.JSONDecodeError:
-            parsed = {"raw": raw, "topic": title}
-            research_json = json.dumps(parsed)
-
+        # Persist whatever we got — UI surfaces _parse_error if present
+        research_json = json.dumps(parsed)
         _upsert_post(topic_id, {"research_json": research_json})
-        _update_status(slug, "verifying_research")
-        print(f"[research] Done. Status -> verifying_research", flush=True)
+
+        if parsed.get("_parse_error") or not parsed.get("summary"):
+            print(f"[research] FAILED to get usable digest. Marking failed.", flush=True)
+            _update_status(slug, "failed")
+        else:
+            _update_status(slug, "verifying_research")
+            print(f"[research] Done. Status -> verifying_research", flush=True)
         return parsed
 
     # ── Stage: Write → Humanise → Image → Link ──────────────────────────────

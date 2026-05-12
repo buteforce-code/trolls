@@ -218,19 +218,38 @@ export default function Dashboard() {
   const [activeTag, setActiveTag] = useState<string | null>(null)
   const [modal, setModal]         = useState(false)
 
-  const load = useCallback(async () => {
+  const [lastRefresh, setLastRefresh] = useState<Date>(new Date())
+
+  const load = useCallback(async (): Promise<Topic[]> => {
     try {
       const res = await fetch('/api/topics')
       const data = await res.json()
-      setTopics(data.topics || [])
-    } catch {}
-    setLoading(false)
+      const next: Topic[] = data.topics || []
+      setTopics(next)
+      setLastRefresh(new Date())
+      return next
+    } catch {
+      return []
+    } finally {
+      setLoading(false)
+    }
   }, [])
 
+  // Adaptive polling: 3s when any topic is actively processing, 10s otherwise.
   useEffect(() => {
-    load()
-    const iv = setInterval(load, 8000)
-    return () => clearInterval(iv)
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout>
+    const ACTIVE = new Set(['queued', 'researching', 'writing', 'publishing'])
+
+    const loop = async (): Promise<void> => {
+      if (cancelled) return
+      const fresh = await load()
+      if (cancelled) return
+      const delay = fresh.some(t => ACTIVE.has(t.status)) ? 3000 : 10000
+      timer = setTimeout(loop, delay)
+    }
+    loop()
+    return () => { cancelled = true; clearTimeout(timer) }
   }, [load])
 
   const handleDelete = (slug: string) => {
@@ -265,9 +284,25 @@ export default function Dashboard() {
                 {counts.failed > 0    && <> · <span style={{ color: 'var(--red)' }}>{counts.failed} failed</span></>}
               </p>
             </div>
-            <button className="btn btn-primary" onClick={() => setModal(true)}>
-              + New Topic
-            </button>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <span
+                title={`Last refresh: ${lastRefresh.toLocaleTimeString()}`}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text-muted)' }}
+              >
+                <span
+                  aria-hidden
+                  style={{
+                    width: 8, height: 8, borderRadius: '50%',
+                    background: 'var(--green, #16a34a)',
+                    animation: 'pulse 1.2s ease-in-out infinite',
+                  }}
+                />
+                Live
+              </span>
+              <button className="btn btn-primary" onClick={() => setModal(true)}>
+                + New Topic
+              </button>
+            </div>
           </div>
         </div>
 

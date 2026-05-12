@@ -37,6 +37,7 @@ export default function TopicPage({ params }: { params: Promise<{ slug: string }
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [feedback, setFeedback]         = useState('')
   const [logLines, setLogLines]         = useState<string[]>([])
+  const [videoKit, setVideoKit]         = useState<any>(null)
   const logCursorRef = useRef(0)
   const mountedRef = useRef(true)
 
@@ -212,6 +213,16 @@ export default function TopicPage({ params }: { params: Promise<{ slug: string }
     }
   }
 
+  const handleVideoKit = async () => {
+    setActionLoading(true)
+    try {
+      const res = await fetch(`/api/topic/${slug}/video`)
+      if (res.ok) setVideoKit(await res.json())
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
   return (
     <main className="container">
       <div style={{ marginTop: 24, marginBottom: 12, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -305,6 +316,19 @@ export default function TopicPage({ params }: { params: Promise<{ slug: string }
               </a>
             </div>
           )}
+
+          {(post?.mdx_final || digest) && (
+            <div style={{ marginTop: 12 }}>
+              <button
+                className="btn btn-outline"
+                style={{ width: '100%', justifyContent: 'center' }}
+                onClick={handleVideoKit}
+                disabled={actionLoading}
+              >
+                {actionLoading ? <><span className="spinner" /> Preparing...</> : 'Generate Remotion Kit'}
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Right: Content Area */}
@@ -314,6 +338,28 @@ export default function TopicPage({ params }: { params: Promise<{ slug: string }
             <span className="badge badge-queued">{topic.slug}</span>
             {(topic.tags || []).map((t: string) => <span key={t} className="tag">{t}</span>)}
           </div>
+
+          {videoKit && (
+            <div className="card remotion-kit">
+              <div className="remotion-kit-header">
+                <div>
+                  <div className="remotion-kit-label">Remotion Video Kit</div>
+                  <div className="remotion-kit-title">Blog promo and landscape social render</div>
+                </div>
+                <span className="tag active">Ready</span>
+              </div>
+              <div className="remotion-kit-grid">
+                <div>
+                  <div className="digest-section-label">Video Props</div>
+                  <pre className="remotion-code">{JSON.stringify(videoKit.props, null, 2)}</pre>
+                </div>
+                <div>
+                  <div className="digest-section-label">Commands</div>
+                  <pre className="remotion-code">{`${videoKit.commands.studio}\n\n${videoKit.commands.vertical}\n\n${videoKit.commands.landscape}`}</pre>
+                </div>
+              </div>
+            </div>
+          )}
 
           {isRunning && !isStuck && (
             <div className="card" style={{ marginBottom: 20, borderColor: 'rgba(245,158,11,0.22)', background: 'rgba(245,158,11,0.05)' }}>
@@ -392,6 +438,34 @@ export default function TopicPage({ params }: { params: Promise<{ slug: string }
           {digest && (topic.status === 'verifying_research' || topic.status === 'writing' || (isFailed && !post?.mdx_final)) && (
             <div className="card digest-card">
               <div className="digest-card-title">Research Digest</div>
+
+              {(digest._parse_error || !digest.summary) && (
+                <div
+                  style={{
+                    background: 'rgba(220,38,38,0.08)',
+                    border: '1px solid rgba(220,38,38,0.25)',
+                    color: 'var(--red, #dc2626)',
+                    padding: '12px 14px',
+                    borderRadius: 8,
+                    fontSize: 13,
+                    marginBottom: 16,
+                  }}
+                >
+                  <strong>Digest is incomplete.</strong>{' '}
+                  {digest._parse_error
+                    ? `Reason: ${digest._parse_error}.`
+                    : 'The research agent returned no usable content.'}
+                  {' '}Click <em>Re-run Research</em> on the right to retry.
+                  {digest.raw && (
+                    <details style={{ marginTop: 8 }}>
+                      <summary style={{ cursor: 'pointer', color: 'var(--text-muted)' }}>Show raw agent output</summary>
+                      <pre style={{ whiteSpace: 'pre-wrap', fontSize: 11, marginTop: 6, maxHeight: 240, overflow: 'auto' }}>
+                        {digest.raw}
+                      </pre>
+                    </details>
+                  )}
+                </div>
+              )}
 
               <div className="digest-section">
                 <div className="digest-section-label">Summary</div>
