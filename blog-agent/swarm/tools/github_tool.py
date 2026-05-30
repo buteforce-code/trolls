@@ -80,31 +80,57 @@ def github_publish(slug: str, title: str, mdx_content: str) -> str:
         payload_data = {
             "slug": clean_slug,
             "title": title,
-            "mdx_content": mdx_content
+            "mdx_content": mdx_content,
         }
         payload = json.dumps(payload_data).encode("utf-8")
+        headers = {
+            "Authorization": f"Bearer {secret_key}",
+            "Content-Type": "application/json",
+            "User-Agent": "Buteforce-Blog-Agent",
+        }
 
-        req = urllib.request.Request(
-            site_api_url,
-            data=payload,
-            headers={
-                "Authorization": f"Bearer {secret_key}",
-                "Content-Type": "application/json",
-                "User-Agent": "Buteforce-Blog-Agent"
-            },
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            result = json.loads(resp.read())
+        # urllib will NOT follow 307/308 for POST — it drops the body or downgrades
+        # to GET — so we hop redirects ourselves while preserving method + body.
+        current_url = site_api_url
+        redirected_via: list[str] = []
+        result: dict | None = None
+        for _ in range(5):
+            req = urllib.request.Request(current_url, data=payload, headers=headers, method="POST")
+            try:
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    result = json.loads(resp.read())
+                break
+            except urllib.error.HTTPError as e:
+                if e.code in (301, 302, 303, 307, 308):
+                    location = e.headers.get("Location")
+                    if not location:
+                        raise
+                    redirected_via.append(f"{e.code} -> {location}")
+                    current_url = urllib.parse.urljoin(current_url, location)
+                    continue
+                raise
+
+        if result is None:
+            return json.dumps({
+                "error": f"Too many redirects from {site_api_url}. Hops: {redirected_via}. "
+                         f"Update SITE_API_URL to the final destination.",
+                "success": False,
+                "published": False,
+            })
 
         return json.dumps({
-            "success": True, 
-            "published": True, 
-            "published_url": result.get("published_url", f"https://buteforce.com/blog/{clean_slug}")
+            "success": True,
+            "published": True,
+            "published_url": result.get("published_url", f"https://buteforce.com/blog/{clean_slug}"),
+            "redirected_via": redirected_via or None,
+            "final_url": current_url if redirected_via else None,
         })
 
     except urllib.error.HTTPError as e:
-        err_msg = e.read().decode('utf-8')
+        try:
+            err_msg = e.read().decode("utf-8")
+        except Exception:
+            err_msg = str(e)
         return json.dumps({"error": f"Site API Error ({e.code}): {err_msg}", "success": False, "published": False})
     except Exception as e:
         return json.dumps({"error": str(e), "success": False, "published": False})

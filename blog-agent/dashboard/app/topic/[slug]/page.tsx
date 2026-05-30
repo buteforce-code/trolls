@@ -5,24 +5,53 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 
 // ── Components ───────────────────────────────────────────────────────────────
-function PipelineStep({ label, status, expected }: { label: string, status: string, expected: string[] }) {
-  const [isActive, isDone] = (() => {
-    if (expected.includes(status)) return [true, false]
-    const order = ['queued', 'researching', 'verifying_research', 'writing', 'verifying_draft', 'publishing', 'published', 'failed']
-    const currentIndex = order.indexOf(status)
-    const expectedIndices = expected.map(e => order.indexOf(e))
-    const expectedMax = Math.max(...expectedIndices)
-    if (currentIndex > expectedMax) return [false, true]
-    return [false, false]
-  })()
+type StepState = 'pending' | 'active' | 'done' | 'failed'
 
-  const cls = `pipeline-step ${isActive ? 'active' : ''} ${isDone ? 'done' : ''}`
+function PipelineStep({ label, state }: { label: string, state: StepState }) {
+  const cls = `pipeline-step ${state === 'active' ? 'active' : ''} ${state === 'done' ? 'done' : ''} ${state === 'failed' ? 'failed' : ''}`
   return (
     <div className={cls}>
       <div className="pipeline-step-dot" />
       <span>{label}</span>
     </div>
   )
+}
+
+// Step indices align with the 6 visible pipeline steps in the sidebar.
+const STEP_ORDER: Record<string, number> = {
+  queued: 0,
+  researching: 0,
+  verifying_research: 1,
+  writing: 2,
+  verifying_draft: 3,
+  publishing: 4,
+  published: 5,
+}
+
+function computeStepStates(status: string, post: any): StepState[] {
+  const states: StepState[] = ['pending', 'pending', 'pending', 'pending', 'pending', 'pending']
+
+  if (status === 'failed') {
+    // Pick the step the worker last attempted, based on what data was persisted.
+    let failedIdx: number
+    if (post?.mdx_final) failedIdx = 4         // crashed during/after Publishing
+    else if (post?.research_json) failedIdx = 2 // crashed during Writing
+    else failedIdx = 0                          // crashed during Researching
+    for (let i = 0; i < failedIdx; i++) states[i] = 'done'
+    states[failedIdx] = 'failed'
+    return states
+  }
+
+  const currentIdx = STEP_ORDER[status]
+  if (currentIdx === undefined) return states
+
+  for (let i = 0; i < currentIdx; i++) states[i] = 'done'
+  if (status === 'published') {
+    states[5] = 'done'
+  } else {
+    states[currentIdx] = 'active'
+  }
+  return states
 }
 
 export default function TopicPage({ params }: { params: Promise<{ slug: string }> }) {
@@ -255,12 +284,20 @@ export default function TopicPage({ params }: { params: Promise<{ slug: string }
         <div className="pipeline-sidebar">
           <div className="pipeline-title">Pipeline Status</div>
           <div className="pipeline-steps">
-            <PipelineStep label="1. Researching"          status={topic.status} expected={['queued', 'researching']} />
-            <PipelineStep label="2. Verify Research"      status={topic.status} expected={['verifying_research']} />
-            <PipelineStep label="3. Writing & Humanising" status={topic.status} expected={['writing']} />
-            <PipelineStep label="4. Verify Draft"         status={topic.status} expected={['verifying_draft']} />
-            <PipelineStep label="5. Publishing"           status={topic.status} expected={['publishing']} />
-            <PipelineStep label="6. Done"                 status={topic.status} expected={['published']} />
+            {(() => {
+              const states = computeStepStates(topic.status, post)
+              const labels = [
+                '1. Researching',
+                '2. Verify Research',
+                '3. Writing & Humanising',
+                '4. Verify Draft',
+                '5. Publishing',
+                '6. Done',
+              ]
+              return labels.map((label, i) => (
+                <PipelineStep key={label} label={label} state={states[i]} />
+              ))
+            })()}
           </div>
 
           {/* Failed state — recovery options */}
@@ -281,6 +318,26 @@ export default function TopicPage({ params }: { params: Promise<{ slug: string }
                     ? 'Research is ready. Reset to review and continue writing.'
                     : 'No content saved. Retry research from scratch.'}
                 </div>
+                {post?.last_error && (
+                  <details style={{ marginTop: 8 }}>
+                    <summary style={{ fontSize: 11, color: 'var(--red)', cursor: 'pointer', fontWeight: 600 }}>
+                      Show error from worker
+                    </summary>
+                    <pre style={{
+                      marginTop: 6,
+                      padding: '8px 10px',
+                      background: 'rgba(0,0,0,0.04)',
+                      border: '1px solid rgba(220,38,38,0.18)',
+                      borderRadius: 4,
+                      fontSize: 11,
+                      whiteSpace: 'pre-wrap',
+                      wordBreak: 'break-word',
+                      maxHeight: 200,
+                      overflow: 'auto',
+                      color: 'var(--text)',
+                    }}>{post.last_error}</pre>
+                  </details>
+                )}
               </div>
 
               {/* Smart reset — goes to the right review stage */}
@@ -396,8 +453,8 @@ export default function TopicPage({ params }: { params: Promise<{ slug: string }
             </div>
           )}
 
-          {/* Live job logs */}
-          {(isRunning || isFailed || logLines.length > 0) && (
+          {/* Live job logs — only render when there's something to show or the job is currently running */}
+          {(isRunning || logLines.length > 0) && (
             <div className="card" style={{ marginBottom: 20, padding: 0, overflow: 'hidden' }}>
               <div style={{
                 padding: '10px 14px',
@@ -428,9 +485,19 @@ export default function TopicPage({ params }: { params: Promise<{ slug: string }
                 wordBreak: 'break-word',
               }}>
                 {logLines.length === 0
-                  ? '(no log output yet — file may not exist or job has not produced output)'
+                  ? '(waiting for output from the worker...)'
                   : logLines.join('\n')}
               </pre>
+            </div>
+          )}
+
+          {/* Failed but no live logs — explain why and surface persisted error */}
+          {isFailed && logLines.length === 0 && !post?.last_error && (
+            <div className="card" style={{ marginBottom: 20, fontSize: 13, color: 'var(--text-muted)' }}>
+              <div style={{ fontWeight: 600, color: 'var(--text)', marginBottom: 4 }}>No worker logs available</div>
+              Logs are written to the worker&rsquo;s local temp disk and don&rsquo;t persist across deploys or restarts.
+              If this job ran on a separate instance from the dashboard, its logs are not reachable from here.
+              Re-running will produce fresh live logs.
             </div>
           )}
 

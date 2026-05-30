@@ -81,6 +81,19 @@ def _upsert_post(topic_id: str, data: dict) -> None:
     _db().table("blog_posts").upsert(data, on_conflict="topic_id").execute()
 
 
+def _mark_failed(slug: str, topic_id: str, where: str, err: Exception | str) -> None:
+    """Set status=failed and persist a short error so the dashboard can surface it.
+    Safe to call even if the blog_posts row is missing — upsert will create it.
+    """
+    msg = str(err) if err else "unknown"
+    detail = f"[{where}] {msg}"[:4000]
+    try:
+        _upsert_post(topic_id, {"last_error": detail})
+    except Exception as inner:
+        print(f"[orchestrator] failed to persist last_error: {inner}", flush=True)
+    _update_status(slug, "failed")
+
+
 def _get_post(topic_id: str) -> dict:
     r = _db().table("blog_posts").select("*").eq("topic_id", topic_id).limit(1).execute()
     return r.data[0] if r.data else {}
@@ -192,21 +205,26 @@ class BlogOrchestrator:
         )
 
         parsed: dict = {}
-        for attempt in range(2):
-            raw = _run(self.research_agent, prompt, f"research-{topic_id}-{attempt}")
-            print(f"[research] Agent output: {len(raw)} chars (attempt {attempt + 1})", flush=True)
-            parsed = self._extract_digest(raw, title)
-            missing = [f for f in self.REQUIRED_DIGEST_FIELDS if not parsed.get(f)]
-            if not missing and "_parse_error" not in parsed:
-                break
-            print(f"[research] Incomplete digest — missing {missing or 'parse error'}. "
-                  f"{'Retrying' if attempt == 0 else 'Giving up'}.", flush=True)
-            prompt = (
-                f"Your previous output was missing fields: {missing or 'unparseable JSON'}.\n"
-                f"Re-do the research and return ONLY the raw JSON object with ALL required fields populated.\n"
-                f"No markdown fences. No commentary.\n\n"
-                f"Topic: {title}\nTags: {', '.join(tags)}"
-            )
+        try:
+            for attempt in range(2):
+                raw = _run(self.research_agent, prompt, f"research-{topic_id}-{attempt}")
+                print(f"[research] Agent output: {len(raw)} chars (attempt {attempt + 1})", flush=True)
+                parsed = self._extract_digest(raw, title)
+                missing = [f for f in self.REQUIRED_DIGEST_FIELDS if not parsed.get(f)]
+                if not missing and "_parse_error" not in parsed:
+                    break
+                print(f"[research] Incomplete digest — missing {missing or 'parse error'}. "
+                      f"{'Retrying' if attempt == 0 else 'Giving up'}.", flush=True)
+                prompt = (
+                    f"Your previous output was missing fields: {missing or 'unparseable JSON'}.\n"
+                    f"Re-do the research and return ONLY the raw JSON object with ALL required fields populated.\n"
+                    f"No markdown fences. No commentary.\n\n"
+                    f"Topic: {title}\nTags: {', '.join(tags)}"
+                )
+        except Exception as exc:
+            print(f"[research] CRASH: {exc}", flush=True)
+            _mark_failed(slug, topic_id, "research", exc)
+            raise
 
         # Persist whatever we got — UI surfaces _parse_error if present
         research_json = json.dumps(parsed)
@@ -214,14 +232,23 @@ class BlogOrchestrator:
 
         if parsed.get("_parse_error") or not parsed.get("summary"):
             print(f"[research] FAILED to get usable digest. Marking failed.", flush=True)
-            _update_status(slug, "failed")
+            _mark_failed(slug, topic_id, "research", parsed.get("_parse_error") or "no usable digest")
         else:
+            _upsert_post(topic_id, {"last_error": None})
             _update_status(slug, "verifying_research")
             print(f"[research] Done. Status -> verifying_research", flush=True)
         return parsed
 
     # ── Stage: Write → Humanise → Image → Link ──────────────────────────────
     def run_writing(self, topic_id: str, slug: str, title: str, feedback: str = "") -> dict:
+        try:
+            return self._run_writing_inner(topic_id, slug, title, feedback)
+        except Exception as exc:
+            print(f"[writer] CRASH: {exc}", flush=True)
+            _mark_failed(slug, topic_id, "writer", exc)
+            raise
+
+    def _run_writing_inner(self, topic_id: str, slug: str, title: str, feedback: str = "") -> dict:
         post = _get_post(topic_id)
         research_json = post.get("research_json", "{}")
 
@@ -291,6 +318,7 @@ class BlogOrchestrator:
             "word_count": word_count,
             "hero_image_url": hero_image_url,
             "images": json.dumps(images_meta),
+            "last_error": None,
         })
         _update_status(slug, "verifying_draft")
         print(f"[writer] Done. {word_count} words. Status -> verifying_draft", flush=True)
@@ -303,13 +331,19 @@ class BlogOrchestrator:
         meta_title = post.get("meta_title", slug)
 
         if not mdx_final:
+            _mark_failed(slug, topic_id, "publish", "No mdx_final found — cannot publish.")
             raise ValueError(f"No mdx_final found for topic {slug}")
 
         print(f"\n[publisher] Publishing: {meta_title}", flush=True)
         _update_status(slug, "publishing")
 
         from swarm.tools.github_tool import github_publish
-        result_raw = github_publish(slug, meta_title, mdx_final)
+        try:
+            result_raw = github_publish(slug, meta_title, mdx_final)
+        except Exception as exc:
+            print(f"[publisher] CRASH: {exc}", flush=True)
+            _mark_failed(slug, topic_id, "publish", exc)
+            raise
 
         try:
             result = json.loads(result_raw)
@@ -317,18 +351,19 @@ class BlogOrchestrator:
             result = {"published": False, "error": result_raw}
 
         if result.get("success") or result.get("dry_run"):
-            _update_status(slug, "published")
             url = result.get("published_url", "(dry-run)")
-            
             _upsert_post(topic_id, {
                 "published_url": url,
                 "published_at": datetime.utcnow().isoformat() + "Z",
+                "last_error": None,
             })
+            _update_status(slug, "published")
             print(f"[publisher] Published OK url={url}", flush=True)
             result["published"] = True
         else:
-            _update_status(slug, "failed")
-            print(f"[publisher] Failed: {result.get('error', 'unknown')}", flush=True)
+            err_msg = result.get("error", "unknown publish failure")
+            print(f"[publisher] Failed: {err_msg}", flush=True)
+            _mark_failed(slug, topic_id, "publish", err_msg)
 
         return result
 

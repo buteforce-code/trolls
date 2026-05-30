@@ -46,6 +46,8 @@ STATEMENTS = [
     # Image columns (idempotent — safe to re-run)
     "ALTER TABLE blog_posts ADD COLUMN IF NOT EXISTS hero_image_url text",
     "ALTER TABLE blog_posts ADD COLUMN IF NOT EXISTS images jsonb DEFAULT '[]'",
+    # Last-error column — surfaces worker crash reason in the dashboard
+    "ALTER TABLE blog_posts ADD COLUMN IF NOT EXISTS last_error text",
     # RLS — service key bypasses, anon key reads
     "ALTER TABLE topics ENABLE ROW LEVEL SECURITY",
     "ALTER TABLE blog_posts ENABLE ROW LEVEL SECURITY",

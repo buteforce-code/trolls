@@ -206,6 +206,8 @@ def main():
             "status": target,
             "updated_at": datetime.utcnow().isoformat() + "Z",
         }).eq("id", topic_id).execute()
+        # Clear any stale crash message so the UI doesn't keep showing it.
+        db.table("blog_posts").update({"last_error": None}).eq("topic_id", topic_id).execute()
         print(f"✓ Reset '{slug}' → {target}")
         return
 
