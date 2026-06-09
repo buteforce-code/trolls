@@ -123,9 +123,12 @@ async def _run_agent(agent: LlmAgent, prompt: str, session_id: str, retries: int
             last_err = exc
             msg = str(exc).lower()
             is_quota = "resource exhausted" in msg or "429" in msg or "quota" in msg
-            if is_quota and attempt < retries - 1:
+            # 503/UNAVAILABLE/overloaded = transient Google capacity spike — also worth retrying.
+            is_unavailable = "503" in msg or "unavailable" in msg or "overloaded" in msg or "high demand" in msg
+            if (is_quota or is_unavailable) and attempt < retries - 1:
                 wait = 20 * (attempt + 1)
-                print(f"  [WAIT] Quota hit, retrying in {wait}s...", flush=True)
+                reason = "Quota" if is_quota else "Model unavailable (503)"
+                print(f"  [WAIT] {reason}, retrying in {wait}s...", flush=True)
                 await asyncio.sleep(wait)
             else:
                 break
