@@ -70,6 +70,26 @@ def _brand_context() -> str:
 def _seo_context() -> str:
     seo = _read(_CONFIG_ROOT / "seo-strategy.md") or _read_knowledge_file("seo_strategy.md")
     return f"""
-=== SEO STRATEGY ===
-{seo[:2200]}
+=== SEO STRATEGY (India-first keyword clusters) ===
+{seo[:2600]}
+""".strip()
+
+
+def _strategy_context() -> str:
+    """Positioning + ICP geography. Repo-local and authoritative — it overrides any
+    older global ICP framing baked into the brand bible or agent prompts.
+    """
+    positioning = _read(_CONFIG_ROOT / "positioning.md") or _read_knowledge_file("positioning.md")
+    if not positioning:
+        # Hard fallback so the engine never silently reverts to a generic ICP.
+        positioning = (
+            "Buteforce is Chennai's Industrial AI Company — precision AI systems for India's "
+            "manufacturing corridor (Hyundai, Michelin, Renault/Nissan, BMW in Tamil Nadu). "
+            "ICP: CTOs, plant heads, quality/ops leaders and founders at manufacturers and "
+            "multi-location retailers in India, especially the Chennai/Tamil Nadu corridor. "
+            "India-first — do not default to a US/UK/UAE/AU audience."
+        )
+    return f"""
+=== POSITIONING & ICP (authoritative — India-first) ===
+{positioning[:2600]}
 """.strip()

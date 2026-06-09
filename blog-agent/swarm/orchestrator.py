@@ -37,6 +37,8 @@ from swarm.agents.humaniser import make_humaniser_agent
 from swarm.agents.publisher import make_publisher_agent
 from swarm.agents.imager import run_imaging
 from swarm.agents.linker import run_linking
+from swarm.agents.schema_ld import run_schema_ld
+from swarm.agents.social import run_social
 
 if os.name == "nt":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
@@ -199,9 +201,27 @@ class BlogOrchestrator:
         print(f"\n[research] Starting multi-source research for: {title}", flush=True)
         _update_status(slug, "researching")
 
+        # Pull the roadmap brief + target keyword if this topic was seeded from the
+        # strategy. These steer the agent toward the intended angle and SEO target.
+        brief = target_keyword = ""
+        try:
+            row = _db().table("topics").select("brief,target_keyword").eq("id", topic_id).limit(1).execute()
+            if row.data:
+                brief = (row.data[0].get("brief") or "").strip()
+                target_keyword = (row.data[0].get("target_keyword") or "").strip()
+        except Exception as exc:
+            print(f"[research] Could not load brief/target_keyword: {exc}", flush=True)
+
+        roadmap_section = ""
+        if target_keyword:
+            roadmap_section += f"\nPrimary SEO keyword to target: {target_keyword}"
+        if brief:
+            roadmap_section += f"\nIntended angle (from the content roadmap): {brief}"
+
         prompt = (
             f"Research this topic thoroughly using all available tools:\n\n"
             f"Topic: {title}\nTags: {', '.join(tags)}"
+            f"{roadmap_section}"
         )
 
         parsed: dict = {}
@@ -220,6 +240,7 @@ class BlogOrchestrator:
                     f"Re-do the research and return ONLY the raw JSON object with ALL required fields populated.\n"
                     f"No markdown fences. No commentary.\n\n"
                     f"Topic: {title}\nTags: {', '.join(tags)}"
+                    f"{roadmap_section}"
                 )
         except Exception as exc:
             print(f"[research] CRASH: {exc}", flush=True)
@@ -310,6 +331,38 @@ class BlogOrchestrator:
             if line.startswith("description:"):
                 meta_desc = line.replace("description:", "").strip().strip('"')
 
+        # JSON-LD structured data (Article + FAQ). Best-effort — never blocks the draft.
+        # The schema step also enriches the MDX frontmatter (image + faqs) so the live site,
+        # which renders JSON-LD from frontmatter, emits Article + FAQPage rich results.
+        schema_ld = None
+        try:
+            linked_mdx, schema_ld = run_schema_ld(
+                mdx=linked_mdx,
+                slug=slug,
+                meta_title=meta_title,
+                meta_description=meta_desc,
+                hero_image_url=hero_image_url or "",
+                model=self.model,
+                _run_agent_fn=_run,
+                session_id=topic_id,
+            )
+            word_count = len(linked_mdx.split())
+        except Exception as exc:
+            print(f"[writer] Schema generation failed (non-fatal): {exc}", flush=True)
+
+        # Social kit (LinkedIn carousel + 5 post types + X threads). Best-effort — never blocks.
+        social_kit: dict = {}
+        try:
+            social_kit = run_social(
+                mdx=linked_mdx,
+                research_json=research_json,
+                model=self.model,
+                _run_agent_fn=_run,
+                session_id=topic_id,
+            )
+        except Exception as exc:
+            print(f"[writer] Social generation failed (non-fatal): {exc}", flush=True)
+
         _upsert_post(topic_id, {
             "mdx_draft": draft,
             "mdx_final": linked_mdx,
@@ -318,6 +371,8 @@ class BlogOrchestrator:
             "word_count": word_count,
             "hero_image_url": hero_image_url,
             "images": json.dumps(images_meta),
+            "schema_json": json.dumps(schema_ld) if schema_ld else None,
+            "social_json": json.dumps(social_kit) if social_kit else None,
             "last_error": None,
         })
         _update_status(slug, "verifying_draft")
@@ -329,6 +384,7 @@ class BlogOrchestrator:
         post = _get_post(topic_id)
         mdx_final = post.get("mdx_final", "")
         meta_title = post.get("meta_title", slug)
+        schema_json = post.get("schema_json")
 
         if not mdx_final:
             _mark_failed(slug, topic_id, "publish", "No mdx_final found — cannot publish.")
@@ -339,7 +395,7 @@ class BlogOrchestrator:
 
         from swarm.tools.github_tool import github_publish
         try:
-            result_raw = github_publish(slug, meta_title, mdx_final)
+            result_raw = github_publish(slug, meta_title, mdx_final, schema_json=schema_json)
         except Exception as exc:
             print(f"[publisher] CRASH: {exc}", flush=True)
             _mark_failed(slug, topic_id, "publish", exc)

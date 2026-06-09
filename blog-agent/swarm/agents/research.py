@@ -21,7 +21,7 @@ from swarm.tools.tavily_tool import (
 from swarm.tools.youtube_tool import youtube_search
 from swarm.tools.github_tool import github_search
 from swarm.tools.site_tool import get_published_posts, get_site_brand_data
-from swarm.agents.brand_context import _brand_context
+from swarm.agents.brand_context import _brand_context, _strategy_context, _seo_context
 
 
 def make_research_agent(model: Any) -> LlmAgent:
@@ -35,9 +35,13 @@ def make_research_agent(model: Any) -> LlmAgent:
         name="research_agent",
         model=model,
         instruction=f"""
-You are the Research Agent for Buteforce — Precision AI Systems.
+You are the Research Agent for Buteforce — Chennai's Industrial AI Company.
 
 {_brand_context()}
+
+{_strategy_context()}
+
+{_seo_context()}
 
 ━━━ PHASE 1 — SITE AWARENESS (do this first) ━━━
 
@@ -71,8 +75,9 @@ No markdown wrapper. No preamble. Output ONLY the raw JSON object.
     "Third specific fact",
     "Fourth specific fact — include at least one that is counterintuitive"
   ],
-  "buteforce_angle": "The specific contrarian or insider angle ONLY Buteforce would take. Must connect to Precision AI Systems positioning. Must be non-obvious — not the obvious 'AI is changing everything' take. What would surprise a reader who already knows the topic well?",
-  "suggested_title": "A punchy, SEO-rich working title that reflects the buteforce_angle — not the obvious angle",
+  "buteforce_angle": "The specific contrarian or insider angle ONLY Buteforce would take. Must connect to the India-first 'Chennai's Industrial AI Company' positioning — land the angle on what this means for Indian manufacturers / the Tamil Nadu corridor (Hyundai, Michelin, Renault, BMW) where it fits. Must be non-obvious — not the generic 'AI is changing everything' take. What would surprise a reader who already knows the topic well?",
+  "target_keyword": "The single primary SEO keyword this post should rank for — choose from the SEO STRATEGY clusters above (prefer the India-specific keyword that matches the topic)",
+  "suggested_title": "A punchy, SEO-rich working title that contains the target_keyword and reflects the buteforce_angle — not the obvious angle",
   "suggested_slug": "url-friendly-slug-max-60-chars",
   "already_published": "Summary of what Buteforce has already published on similar topics (from get_published_posts) — or 'none' if nothing overlaps",
   "brand_hooks": "Which Buteforce services or proof stats from get_site_brand_data() are most relevant to weave into this post",
@@ -99,7 +104,7 @@ No markdown wrapper. No preamble. Output ONLY the raw JSON object.
 - key_facts must be verifiable data points, not vague claims. Prefer stats with context.
 - confidence_score = how thoroughly you could research this topic (0–100). Be honest.
 - If a tool returns an error or no results, note it in the relevant source_signals field and move on.
-- The post must serve Buteforce's ICP: CTOs, CEOs, Ops leads at 5–200 person companies in US/UK/UAE/AU.
+- The post must serve Buteforce's ICP (see POSITIONING & ICP above): CTOs, plant heads, quality/operations leaders, and founders at manufacturers and multi-location retailers in INDIA — especially the Chennai / Tamil Nadu manufacturing corridor. India-first. Do NOT aim the content at a US/UK/UAE/AU audience; when a topic is global, land the angle on what it means for Indian manufacturers and the Chennai corridor.
 """.strip(),
         tools=[
             FunctionTool(get_published_posts),

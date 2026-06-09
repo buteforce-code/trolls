@@ -8,6 +8,7 @@ import os
 import json
 import urllib.request
 import urllib.parse
+from typing import Any
 
 
 def github_search(topic: str) -> str:
@@ -51,11 +52,14 @@ def github_search(topic: str) -> str:
         return json.dumps({"error": str(e), "results": []})
 
 
-def github_publish(slug: str, title: str, mdx_content: str) -> str:
+def github_publish(slug: str, title: str, mdx_content: str, schema_json: Any = None) -> str:
     """
     Publish a blog post MDX file to the live Buteforce website.
     The agent now pushes content directly to the site's secure API endpoint.
     Set PUBLISH_DRY_RUN=true to simulate the publish without uploading.
+
+    schema_json (optional): JSON-LD structured data (Article + FAQ) as a dict or JSON string.
+    Sent in the payload as `schema_json` so the site can inject it into the page <head>.
     """
     site_api_url = os.environ.get("SITE_API_URL", "https://www.buteforce.com/api/agent/blog")
     secret_key = os.environ.get("AGENT_SECRET_KEY", "")
@@ -66,6 +70,7 @@ def github_publish(slug: str, title: str, mdx_content: str) -> str:
             "dry_run": True,
             "message": "Dry run — would have published directly to Buteforce Site",
             "would_publish_to": f"{site_api_url} (Slug: {slug})",
+            "schema_json_attached": bool(schema_json),
         })
 
     if not secret_key:
@@ -82,6 +87,15 @@ def github_publish(slug: str, title: str, mdx_content: str) -> str:
             "title": title,
             "mdx_content": mdx_content,
         }
+        # Attach JSON-LD structured data if present (dict or JSON string → always send a dict).
+        if schema_json:
+            if isinstance(schema_json, str):
+                try:
+                    schema_json = json.loads(schema_json)
+                except json.JSONDecodeError:
+                    schema_json = None
+            if schema_json:
+                payload_data["schema_json"] = schema_json
         payload = json.dumps(payload_data).encode("utf-8")
         headers = {
             "Authorization": f"Bearer {secret_key}",

@@ -17,6 +17,32 @@ function PipelineStep({ label, state }: { label: string, state: StepState }) {
   )
 }
 
+// Copyable labelled text block — used to surface each social asset for one-click copy.
+function CopyBlock({ label, text }: { label: string, text: string }) {
+  const [copied, setCopied] = useState(false)
+  if (!text || !text.trim()) return null
+  return (
+    <div className="digest-section">
+      <div className="digest-section-label" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+        <span>{label}</span>
+        <button
+          className="btn btn-sm btn-outline"
+          style={{ fontSize: 11, padding: '2px 10px' }}
+          onClick={() => {
+            navigator.clipboard?.writeText(text).then(() => {
+              setCopied(true)
+              setTimeout(() => setCopied(false), 1200)
+            }).catch(() => {})
+          }}
+        >
+          {copied ? 'Copied ✓' : 'Copy'}
+        </button>
+      </div>
+      <div className="digest-section-value" style={{ whiteSpace: 'pre-wrap' }}>{text}</div>
+    </div>
+  )
+}
+
 // Step indices align with the 6 visible pipeline steps in the sidebar.
 const STEP_ORDER: Record<string, number> = {
   queued: 0,
@@ -147,6 +173,14 @@ export default function TopicPage({ params }: { params: Promise<{ slug: string }
 
   let digest = null
   try { digest = post?.research_json ? JSON.parse(post.research_json) : null } catch {}
+
+  // social_json is a jsonb column → usually already an object, but tolerate a string too.
+  let social: any = null
+  try {
+    social = post?.social_json
+      ? (typeof post.social_json === 'string' ? JSON.parse(post.social_json) : post.social_json)
+      : null
+  } catch {}
 
   // ── Actions ──────────────────────────────────────────────────────────────
   const handleApprove = async () => {
@@ -582,6 +616,53 @@ export default function TopicPage({ params }: { params: Promise<{ slug: string }
                 </div>
               </div>
               <div className="blog-preview-content">{post.mdx_final}</div>
+            </div>
+          )}
+
+          {/* Social Kit — LinkedIn carousel + 5 post types + X threads (repurposed from the post) */}
+          {social && (social.linkedin || social.x) && (
+            <div className="card digest-card" style={{ marginTop: 24 }}>
+              <div className="digest-card-title">Social Kit</div>
+
+              {social.linkedin && (
+                <>
+                  <div className="digest-section-label" style={{ fontSize: 13, marginTop: 4, marginBottom: 8, color: '#0a66c2' }}>LinkedIn</div>
+                  <CopyBlock label="Founder Story" text={social.linkedin.founder_story} />
+                  <CopyBlock label="Contrarian Take" text={social.linkedin.contrarian} />
+                  <CopyBlock label="Data Post" text={social.linkedin.data_post} />
+                  <CopyBlock label="Bilateral / Corridor" text={social.linkedin.bilateral} />
+                  <CopyBlock label="Company Page Post" text={social.linkedin.company_page} />
+                  {social.linkedin.carousel?.slides?.length > 0 && (
+                    <CopyBlock
+                      label={`Carousel${social.linkedin.carousel.title ? ' — ' + social.linkedin.carousel.title : ''}`}
+                      text={social.linkedin.carousel.slides.map((s: string, i: number) => `${i + 1}. ${s}`).join('\n')}
+                    />
+                  )}
+                </>
+              )}
+
+              {social.x && (
+                <>
+                  <div className="digest-section-label" style={{ fontSize: 13, marginTop: 12, marginBottom: 8 }}>X / Twitter</div>
+                  {social.x.thread_numbered?.length > 0 && (
+                    <CopyBlock label="Numbered Thread" text={social.x.thread_numbered.join('\n\n')} />
+                  )}
+                  {social.x.thread_story_or_howto?.length > 0 && (
+                    <CopyBlock label="Story / How-to Thread" text={social.x.thread_story_or_howto.join('\n\n')} />
+                  )}
+                  {social.x.tweets?.length > 0 && (
+                    <CopyBlock label="Single Tweets" text={social.x.tweets.join('\n\n')} />
+                  )}
+                </>
+              )}
+
+              {social.hashtags && (
+                <CopyBlock
+                  label="Hashtags"
+                  text={`LinkedIn: ${(social.hashtags.linkedin || []).join(' ')}\nX: ${(social.hashtags.x || []).join(' ')}`}
+                />
+              )}
+              {social.first_comment_link && <CopyBlock label="First Comment (link)" text={social.first_comment_link} />}
             </div>
           )}
 
