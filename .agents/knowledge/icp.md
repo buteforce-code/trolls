@@ -12,6 +12,9 @@ last-updated: 2026-04-15
 
 ---
 
+## ⚠️ Addendum (2026-06-09) — India-local SMB track
+The **Reach Engine** ([[reach_engine]]) targets **India-local SMBs** (Chennai/TN first; import/export + logistics, then clinics + retail), aligning with the 2026-06-08 India-first realignment. The international ICP below is retained for high-value Tier-1 / Upwork-sourced leads. India-local research framework + decision-makers → [[reach_engine#5 Stage 4 — Per-Lead Research Dossier]].
+
 ## Overview
 - **Company size:** 5–200 employees (sweet spot per [[brand_bible#Target Audience]])
 - **Revenue:** $1M–$50M

@@ -1,7 +1,7 @@
 ---
 links: "[[INDEX]] | [[dhyan_psychology]] | [[founder]] | [[brand_bible]] | [[marketing_engine]]"
 type: technical
-last-updated: 2026-04-22
+last-updated: 2026-04-28
 ---
 
 # Tech Stack — Buteforce Systems
@@ -59,30 +59,58 @@ last-updated: 2026-04-22
 ## Lead Outreacher Review App (d:\Projects\Buteforce\Projects\Lead Outreacher\review_app)
 
 > Manual review-and-send tool for high-value Tier 1 outreach.
-> Last updated: 2026-04-22
+> **LIVE on Render:** `https://buteforce-outreach.onrender.com`
+> Last updated: 2026-04-28
 
 | Layer | Technology | Notes |
 |---|---|---|
-| Backend | FastAPI + uvicorn | Local review server at `http://127.0.0.1:8765` |
-| UI | Server-rendered HTML | Sidebar queue, editable subject/body, send/skip/reset |
-| Queue State | JSON + CSV sync | `queue_store.py` keeps queue state aligned with `outreach_tracker.csv` |
-| Draft Generation | Gemini Developer API | `generator.py` now uses the official `google-genai` SDK with structured JSON output and a quality-first default model (`gemini-2.5-pro`) |
-| Email Delivery | SMTP | Google Workspace app password via `SMTP_PASS` |
+| Backend | FastAPI + uvicorn | Deployed on Render free tier (`srv-d7ng7h3eo5us73f9p6rg`) |
+| UI | Server-rendered HTML | Inter font, Buteforce brand tokens, notification center |
+| Queue / Data | Google Sheets | `sheets_store.py` — SHEET_ID `1KghW03YIgrvWhSPzKTgw_uyGU2BcMVtB5nP1tPZUdfQ`, tab "Clients detail" |
+| Auth to Sheets | Service account JSON | `friday@buteforce.iam.gserviceaccount.com` — must be an Editor on the sheet |
+| Draft Generation | Gemini Developer API | `generator.py` — `gemini-2.5-pro`, structured JSON output |
+| Email Delivery | SMTP multipart | `mailer.py` sends branded HTML + plain-text fallback via `admin@buteforce.com` |
+| Email Template | Custom HTML | `email_template.py` — yellow accent bar, brand header, signature, footer tagline |
+| Reply Notifications | IMAP4_SSL + Gemini | `inbox_checker.py` polls `imap.gmail.com:993`, Gemini classifies replies |
+| Notification State | File (`notif.json`) | `notif_store.py` — ephemeral (resets on redeploy, re-fetched from IMAP on load) |
 
 ### Key File Paths
-- `Projects/Lead Outreacher/review_app/app.py` - FastAPI routes and local server entry
-- `Projects/Lead Outreacher/review_app/generator.py` - outreach draft generation
-- `Projects/Lead Outreacher/review_app/mailer.py` - SMTP send path
-- `Projects/Lead Outreacher/review_app/queue_store.py` - queue persistence + `outreach_tracker.csv` sync
-- `Projects/Lead Outreacher/review_app/templates/index.html` - review UI
-- `Projects/Lead Outreacher/start_review.bat` - local launcher
+- `review_app/app.py` — FastAPI routes (queue, generate, send, skip, reset, notifications)
+- `review_app/generator.py` — Gemini email draft generation
+- `review_app/mailer.py` — multipart SMTP send
+- `review_app/email_template.py` — branded HTML email builder
+- `review_app/sheets_store.py` — Google Sheets read/write (replaces `queue_store.py` when env var set)
+- `review_app/queue_store.py` — fallback file-based store (used locally without Sheets)
+- `review_app/inbox_checker.py` — IMAP reply fetcher + Gemini classifier
+- `review_app/notif_store.py` — notification persistence + poll throttle
+- `review_app/templates/index.html` — full SPA review UI with notification center
+- `render.yaml` — Render deploy config
 
-### Environment
-- `review_app/.env` is required before the launcher should be considered production-ready
-- Active setup: `GEMINI_API_KEY` with `GEMINI_MODEL=gemini-2.5-pro`
-- Optional compatibility alias: `GOOGLE_AI_API_KEY` to match other Buteforce Python scripts
-- Prefer Google AI Studio API-key auth over Vertex AI / ADC for this tool because it is a small local server-side app and other Buteforce notes already record Vertex friction in similar Windows-based workflows
-- `start_review.bat` now creates and uses `review_app/.venv` so app dependencies stay isolated from the rest of the machine
+### Notification Classification Labels
+`interested` · `meeting_requested` · `question` · `not_interested` · `out_of_office` · `unsubscribe` · `other`
+
+Each reply gets: `classification`, `reason` (one sentence), `suggested_action` (specific next step)
+
+### Render Environment Variables
+| Var | Value |
+|---|---|
+| `GEMINI_API_KEY` | Google AI Studio key |
+| `GEMINI_MODEL` | `gemini-2.5-pro` |
+| `SMTP_HOST` | `smtp.gmail.com` |
+| `SMTP_PORT` | `587` |
+| `SMTP_USER` | `admin@buteforce.com` |
+| `SMTP_PASS` | Google Workspace App Password |
+| `IMAP_HOST` | `imap.gmail.com` |
+| `IMAP_PORT` | `993` |
+| `GOOGLE_SERVICE_ACCOUNT_JSON` | Full service account JSON (single-line) |
+| `SHEET_ID` | `1KghW03YIgrvWhSPzKTgw_uyGU2BcMVtB5nP1tPZUdfQ` |
+| `SHEET_NAME` | `Clients detail` |
+
+### Known Issues / Watchlist
+- Free Render tier spins down on inactivity — 50s+ cold start on first request
+- `notif.json` is ephemeral; read state resets on redeploy (replies re-fetched from IMAP automatically)
+- IMAP requires "IMAP access" enabled in Google Workspace Admin for `admin@buteforce.com`
+- Tier 1 threshold: `spend_usd >= 200,000` (column K of sheet, parsed from `$230K` etc.)
 
 ---
 
@@ -205,6 +233,7 @@ queued → researching → verifying_research → writing → verifying_draft �
 - The agent interacts with the live website via `POST` and `GET` requests to `https://buteforce.com/api/agent/blog` (or configured `SITE_API_URL`). 
 - Research agent pulls live `/content/blog/` to evade duplicate content overlaps and extracts JSON summaries from `lib/data.ts` to uphold brand messaging.
 - Publisher agent commits directly through the proxy endpoint. `ButeForce-Site` API uses `GITHUB_PUBLISH_TOKEN` to fulfill commit protocols on `buteforce-code/ButeForce-Site` repository.
+- Remotion video generation is installed in `blog-agent/dashboard` for topic-based social assets. Use `npm run remotion:studio` to preview, `npm run remotion:render:sample` to test, and `npm run remotion:render:topic -- ...` with props generated by the topic detail page.
 
 ### Environment Variables (dashboard/.env.local)
 
@@ -235,3 +264,5 @@ PUBLISH_DRY_RUN=true
 - **Dev server TCP connections**: Excessive bash curl calls can create stuck ESTABLISHED connections on port 3005, overwhelming the dev server. Fix: Ctrl+C → `npm run dev`.
 - **Swarm DB constraint** (fixed 2026-04-11): The `blog_posts` table requires `UNIQUE (topic_id)` for upserts to work. Already applied in Supabase.
 - **PUBLISH_DRY_RUN**: Currently `true` in `.env.local`. Change to `false` when ready to push posts live to GitHub.
+- **Free-tier Supabase auto-pause = dashboard blackout** (diagnosed 2026-05-28): The blog dashboard reads `topics` from Supabase project `mrfiusskqnnsjmfiffci` ("Marketing Agent Swarm"). On the free tier, Supabase pauses a project after ~7 days of no queries. While paused, `/api/topics` times out and the Render dashboard shows **no blogs** ("old blogs gone") — but buteforce.com/blog is unaffected because the live site serves committed MDX from a separate Vercel deploy. Fix: restore the project (Supabase MCP `restore_project` or the Supabase dashboard "Restore" button); it comes back `ACTIVE_HEALTHY` in ~2 min with all data intact. Prevention: hit the DB at least weekly (a cron/uptime ping to the dashboard `/api/topics`) or upgrade to a paid Supabase plan.
+- **render.yaml Vertex flag mismatch** (open, noted 2026-05-28): `blog-agent/render.yaml` and `blog-agent/.env` set `GOOGLE_GENAI_USE_VERTEXAI=true`, which contradicts the Vertex AI Execution Block above and `dashboard/.env.local` (`false`). Dashboard listing is unaffected, but agent research/writing runs on Render will likely 403/404 until this is set to `false` (verify Imagen image-gen path first, since it may depend on Vertex creds).

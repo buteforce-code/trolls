@@ -70,12 +70,12 @@
               "title": "Bookmarks"
             }
           }
-        ],
-        "currentTab": 1
+        ]
       }
     ],
     "direction": "horizontal",
-    "width": 300
+    "width": 300,
+    "collapsed": true
   },
   "right": {
     "id": "1fc79854194b4379",
@@ -179,6 +179,23 @@
   },
   "active": "5eee7ec0cfc7b756",
   "lastOpenFiles": [
+    "Buteforce_Marketing_Strategy_2026.md",
+    "Buteforce_Marketing_Strategy_2026.md.tmp.21432.ad1571beed2a",
+    "knowledge/dhyan_psychology.md",
+    "graphify-out/obsidian/Buteforce Defensible Advantages.md",
+    "graphify-out/obsidian/Competitor Category Large AI Consultancies.md",
+    "graphify-out/obsidian/Brand Manifesto No Consultants, No Pilots.md",
+    "graphify-out/obsidian/Dhyan Decision Making Principles.md",
+    "Untitled.base",
+    "graphify-out/obsidian/_COMMUNITY_Dhyan Psychology Working Style.md",
+    "graphify-out/obsidian/_COMMUNITY_Dhyan Psychology Core Traits.md",
+    "2026-06-03.md",
+    "Untitled 2.canvas",
+    "knowledge/cj_cawley.md.tmp.23224.4494659b12ad",
+    "graphify-out/GRAPH_REPORT.md",
+    "knowledge/easybali_memory.md",
+    "knowledge/INDEX.md",
+    "knowledge/cf_software_plan.md",
     "Untitled 1.canvas",
     "Untitled.canvas",
     "2026-04-20.md",
@@ -197,24 +214,9 @@
     "graphify-out/obsidian/SwarmOrchestrator (Google ADK).md",
     "graphify-out/obsidian/X (Twitter) Marketing Channel.md",
     "graphify-out/obsidian/YOLOv8 Computer Vision Model.md",
-    "graphify-out/obsidian/Website Design Language.md",
-    "graphify-out/obsidian/TangoEye (Hooter Competitor).md",
-    "graphify-out/obsidian/Upwork Lead Source.md",
-    "graphify-out/obsidian/TinaCMS Frontmatter Schema Alignment.md",
-    "graphify-out/obsidian/Unlearning Protocol for AI Agents.md",
-    "graphify-out/obsidian/Tagline Precision AI Systems.md",
-    "graphify-out/obsidian/Real Estate ICP.md",
-    "graphify-out/obsidian/Rationale Why Precision AI Systems Works.md",
-    "graphify-out/obsidian/Rationale RevOp Auto-Detection vs TangoEye Manual Tagging.md",
-    "graphify-out/obsidian/Project Plans Index Section.md",
-    "graphify-out/obsidian/Proof Points Summary Table.md",
-    "graphify-out/obsidian/Organic SEO Lead Source.md",
     "graphify-out/obsidian",
     "graphify-out/graph.html",
     "graphify-out/graph.json",
-    "graphify-out/cache",
-    "graphify-out",
-    "codex",
-    "Untitled"
+    "graphify-out/cache"
   ]
 }

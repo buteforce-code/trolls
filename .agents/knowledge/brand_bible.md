@@ -71,6 +71,11 @@ This is not optional copy. It is the brand's ethical charter. Every page must co
 - **Glassmorphism:** Used for proof/stat containers, cards. Strategy: `bg-white/5 backdrop-blur-xl border border-white/10`
 - **Imagery:** Either bespoke AI-generated or real product screenshots (never stock photos)
 
+## Logo Assets
+- Primary wordmark: `D:\Projects\Buteforce\Projects\Marketing agents\Asset 4.png`
+- Primary mark / icon: `D:\Projects\Buteforce\Projects\Marketing agents\Buteforce first draft.svg`
+- Use these assets for Buteforce site and app logos unless Dhyan explicitly replaces them.
+
 ---
 
 ## Homepage Required Sections

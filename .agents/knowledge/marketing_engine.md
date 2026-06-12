@@ -48,36 +48,47 @@ last-updated: 2026-04-22
 
 ---
 
-## Outreach Pipeline Architecture
+## Blog Swarm Pipeline Architecture
+
+> Reality check (2026-06-08): the blog swarm lives in `Projects/Marketing agents/blog-agent/`.
+> It is controlled by a **Next.js dashboard** (and `run.py` CLI), **not Telegram**. There is no
+> DesignerAgent and no Telegram code in this tree. Lead outreach is a *separate* project
+> (`Projects/Lead Outreacher/review_app`) — do not conflate the two.
 
 ```
-Telegram / Website → SwarmOrchestrator (Google ADK)
+Next.js dashboard (app/api/) or run.py CLI → BlogOrchestrator (Google ADK, stateful, Supabase state)
                               ↓
-            ┌─────────────────────────────────────┐
-            │  ResearchAgent → [VERIFY with Dhyan] │
-            │  WriterAgent   → [VERIFY with Dhyan] │
-            │  HumaniserAgent (brand voice filter)  │
-            │  DesignerAgent → [VERIFY with Dhyan]  │
-            └─────────────────────────────────────┘
+   queued → researching → verifying_research → writing → verifying_draft → publishing → published
                               ↓
-                   Auto-publish to buteforce.com (MDX via GitHub API)
+   ┌──────────────────────────────────────────────────────────────────────┐
+   │ Research → [VERIFY] → Writer → Humaniser → Imager → Linker → Schema    │
+   │                         → [VERIFY] → Publisher                         │
+   └──────────────────────────────────────────────────────────────────────┘
+                              ↓
+        Publish: POST MDX + JSON-LD to buteforce.com/api/agent/blog (site API, Bearer AGENT_SECRET_KEY)
 ```
 
-### Key Files (Marketing Swarm)
-- `scripts/ingest_leads.py` — bridges `leads_clean.csv` into Supabase (154 leads ingested)
-- `swarm/orchestrator.py` — Superior Orchestrating Agent (Google ADK, stateful)
-- `swarm/sub_agents.py` — ResearchAgent, WriterAgent, HumaniserAgent, DesignerAgent
-- `dashboard/lib/telegram-orchestrator-bridge.ts` — Next.js → Python bridge
-- `dashboard/app/api/telegram/webhook/route.ts` — Telegram webhook entry point
-- Supabase DB — stores full campaign state machine, artifacts, messages
-- `config/brand-bible.md` + `D:/Projects/Buteforce/.agents/knowledge/` — static brand memory loaded by all agents
+Two human approval gates (research digest, draft) with a rejection → re-run-with-feedback loop.
+
+### Key Files (Blog Swarm — `blog-agent/`)
+- `swarm/orchestrator.py` — stateful BlogOrchestrator (Google ADK), Supabase state store
+- `swarm/agents/` — `research.py`, `writer.py`, `humaniser.py`, `imager.py`, `linker.py`, `schema_ld.py`, `publisher.py`
+- `swarm/agents/brand_context.py` — loads `config/positioning.md` (ICP), `config/seo-strategy.md` (keywords), brand bible
+- `swarm/tools/` — `tavily_tool.py`, `youtube_tool.py`, `github_tool.py` (search + site-API publish), `site_tool.py`, `image_tool.py`, `supabase_tool.py`
+- `config/positioning.md` + `config/seo-strategy.md` — **authoritative India-first ICP + keyword strategy**, repo-local, loaded by every agent
+- `seed_topics.py` — seeds the 24-post India-first roadmap (`Buteforce_Marketing_Strategy_2026.md` §4) as Supabase topics
+- `setup_db.py` — idempotent schema (topics, blog_posts, `brief`/`target_keyword`/`schema_json` columns, RLS)
+- `dashboard/app/api/` — Next.js routes that spawn `python run.py`
+- Supabase DB — `topics` + `blog_posts` state machine and artifacts
+- `D:/Projects/Buteforce/.agents/knowledge/` — vault brand memory (secondary to repo-local `config/`)
 
 ---
 
 ## Email Domain Strategy
 - **Primary domain** (`buteforce.com`) — PROTECTED. Never used for cold outreach.
-- **Warm-up domain** — separate subdomain or cheap alternate domain for cold campaigns
+- **Cold subdomain — DECIDED 2026-06-09:** cold sends from **`outreach.buteforce.com`** (own SPF/DKIM/DMARC, warmup 10→50/day over 4–6 wks). Keeps the brand name, isolates the root domain's inbound reputation.
 - This protects primary domain reputation and deliverability for inbound leads
+- Full autonomous engine spec → [[reach_engine]]
 
 ---
 
@@ -102,8 +113,8 @@ Telegram / Website → SwarmOrchestrator (Google ADK)
 
 ## Current Status (April 2026)
 - [x] Lead database populated in Supabase — 154 Upwork leads ingested as `intake` campaigns
-- [x] Google ADK swarm built — Orchestrator + 4 sub-agents (Research, Writer, Humaniser, Designer)
-- [x] Telegram webhook wired to SwarmOrchestrator (ADK, Vertex AI via GCP billing active)
+- [x] Google ADK blog swarm built — BlogOrchestrator + 6 agents (Research, Writer, Humaniser, Imager, Linker, Publisher) + JSON-LD schema step. Controlled via Next.js dashboard / `run.py` (NOT Telegram; no DesignerAgent).
+- [x] **Engine realigned to India-first strategy (2026-06-08):** `config/positioning.md` + `config/seo-strategy.md` now drive Research/Writer; old US/UK/UAE/AU ICP line removed. 24-post roadmap seedable via `seed_topics.py`. Article + FAQ JSON-LD generated per post.
 - [x] End-to-end test verified: research→draft→image→publish pipeline confirmed working
 - [x] Obsidian vault loaded as static brand memory by all swarm agents
 - [x] GCP billing enabled (₹1,000 credit, Vertex AI active, gemini-2.0-flash)
@@ -114,20 +125,23 @@ Telegram / Website → SwarmOrchestrator (Google ADK)
 - [ ] **URGENT #2: Fix hero section dark mode violation — entire site confirmed dark (hero.tsx bg-black). brand rule is light-always since 2026-04-12. Not yet implemented in codebase.**
 - [ ] **URGENT #3: Add keyword H2 below hero H1 — H1 has zero SEO keywords**
 - [ ] LinkedIn/Buffer publish credentials still needed for social channels
-- [ ] `GITHUB_REPO` env var needs the real repo slug for live blog publishing
+- [x] ~~`GITHUB_REPO` env var~~ — OBSOLETE. Publishing POSTs to the site API, not GitHub. Live publish needs `AGENT_SECRET_KEY` + `SITE_API_URL` set and `PUBLISH_DRY_RUN=false` (default is dry-run).
 - [ ] LinkedIn Insight Tag (retargeting pixel) — add to layout.tsx head, 10 mins
 - [ ] Clutch / DesignRush / G2 free agency listings — improves GEO + LLM citations
 - [ ] Remove theme-toggle.tsx from nav — dark mode should be disabled per brand rule
 - [ ] Fix layout.tsx default OG title — currently "AI Automation & Computer Vision", should be "Precision AI Systems"
 - [ ] Create individual service landing pages: /services/computer-vision, /services/document-ai, /services/ai-agents
-- [ ] Publish Blog Post #1 (written, needs MDX format + GITHUB_REPO env var)
+- [ ] Publish Blog Post #1 "Industrial AI for Chennai's Manufacturing Corridor" — seeded as a queued topic by `seed_topics.py`; run it through the swarm and flip `PUBLISH_DRY_RUN=false` once the URGENT site fixes are done
 - [ ] Expand case study pages /work/[slug] with 300–500 word write-ups (currently thin content)
 
 - [x] Tier 1 review UI built locally in `review_app/` for manual draft review and send flow
 - [x] Migrate `review_app/generator.py` from Anthropic to Gemini Developer API so Tier 1 manual outreach can generate drafts without Anthropic credits
 
-## Telegram Control Commands
-- Send any **topic** → Orchestrator starts the full pipeline
-- Reply **APPROVE** → advances to next stage
-- Reply **REJECT [feedback]** → triggers revision with feedback
-- `/status` `/campaigns` `/drafts` `/topics` — dashboard commands
+## Control Surface (Next.js dashboard / CLI — NOT Telegram)
+
+> The Telegram control flow was never built in `blog-agent/`. Control is the dashboard or `run.py`.
+
+- New topic → `POST /api/run` (or `python run.py --topic "..." --tags "..."`) starts research
+- Approve a gate → `POST /api/approve` (or `python run.py --approve <slug>`) advances to the next stage
+- Reject a gate → `POST /api/reject` with feedback (or `python run.py --reject <slug> --feedback "..."`) re-runs with feedback
+- `GET /api/topics`, `GET /api/topic/:slug` — status + artifacts
