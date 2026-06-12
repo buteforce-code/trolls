@@ -54,3 +54,23 @@ services:
         sync: false
       - key: PUBLISH_DRY_RUN
         value: "false"
+      # ── Autopilot (autonomous scheduler) ──────────────────────────────────
+      # AUTOPILOT_ENABLED=false is the kill switch — pause without a redeploy.
+      - key: AUTOPILOT_ENABLED
+        value: "true"
+      # Spacing between published posts (the cadence Google sees).
+      - key: PUBLISH_GAP_HOURS
+        value: "24"
+      # How many finished posts to keep scheduled ahead in the veto window.
+      - key: AUTOPILOT_BUFFER
+        value: "1"
+      # Topics the ideator generates when the queue empties.
+      - key: AUTOPILOT_IDEATE_BATCH
+        value: "8"
+      # Hard cap on research+write work per tick, to keep each tick bounded.
+      - key: AUTOPILOT_MAX_PRODUCE_PER_TICK
+        value: "1"
+      # Shared secret the GitHub Actions cron sends as a Bearer token. Set this to
+      # the same value as the AUTOPILOT_TICK_SECRET repo secret in GitHub.
+      - key: AUTOPILOT_TICK_SECRET
+        sync: false

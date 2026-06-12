@@ -79,6 +79,56 @@ python run.py --list                                                       # all
 - `PUBLISH_DRY_RUN=true` is the default — nothing auto-publishes until `AGENT_SECRET_KEY` is set and the flag is flipped to `false`.
 - Runtime visibility: `run.py` runs on the server, so raw stdout/stderr appears in server/Render logs, not the browser console. The dashboard surfaces status changes and `last_error` in-app.
 
+## Autopilot (autonomous mode)
+
+Autopilot drains the queued roadmap and then keeps the blog alive on its own — no
+clicks. It auto-advances research → writing (the two human gates are skipped), then
+holds each finished post in a **`scheduled`** state with a `scheduled_for` timestamp:
+a **24-hour veto window** where the post auto-publishes at its slot *unless* you reject
+it first in the dashboard. Cadence (default **1 post / 24h**) is enforced by those
+timestamps, so the trigger can fire on a coarse schedule.
+
+```
+queued → researching → verifying_research → writing → verifying_draft → SCHEDULED → published
+            (auto)            (auto)          (auto)        (auto)        (24h veto)   (at slot)
+```
+
+When the queue empties, the **ideator agent** (`swarm/agents/ideator.py`) researches the
+brand + live market and generates a fresh batch of India-first topics, so the engine
+never runs dry.
+
+**One tick** (`swarm/autopilot.py:run_tick`) does, idempotently:
+1. publish the single most-overdue `scheduled` post (re-spacing any backlog so downtime
+   never dumps everything at once);
+2. keep `AUTOPILOT_BUFFER` finished posts scheduled ahead (research + write the next
+   topic, then schedule it at the next free slot);
+3. refill the queue via the ideator when nothing is left.
+
+### How it fires
+
+A free **GitHub Actions** cron (`.github/workflows/blog-autopilot.yml`, hourly) POSTs to
+the dashboard's secret-protected `POST /api/autopilot/tick`, which spawns
+`python run.py --autopilot` on Render and returns immediately. You can also run a tick by
+hand: `python run.py --autopilot`, or trigger the workflow from the Actions tab.
+
+### One-time setup checklist
+
+1. **DB migration** — apply the new `scheduled_for` column: `python setup_db.py` (idempotent).
+2. **Render env** (already in `render.yaml`): confirm `PUBLISH_DRY_RUN=false`,
+   `AGENT_SECRET_KEY` set, and set **`AUTOPILOT_TICK_SECRET`** to a long random string.
+   Tune `PUBLISH_GAP_HOURS` / `AUTOPILOT_ENABLED` as desired.
+3. **GitHub repo secrets** (Settings → Secrets and variables → Actions):
+   - `AUTOPILOT_URL` = `https://<your-render-host>/api/autopilot/tick`
+   - `AUTOPILOT_TICK_SECRET` = the same value as the Render env var.
+4. Redeploy. The hourly cron takes over from there. Pause anytime with
+   `AUTOPILOT_ENABLED=false` (no redeploy needed) or by disabling the workflow.
+
+### Vetoing a post
+
+Open the scheduled post in the dashboard before its slot: **Publish Now** ships it
+immediately, **Send Feedback** pulls it off the schedule and re-drafts it with your notes
+(it won't auto-publish again — it returns to manual review), and **Delete** drops it.
+
 ## Render
 
 Use the blueprint in `render.yaml`. Health check: `/`.

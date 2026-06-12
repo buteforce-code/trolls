@@ -12,6 +12,14 @@ type Topic = {
   status: string
   tags: string[]
   updated_at: string
+  scheduled_for?: string | null
+}
+
+type AutopilotState = {
+  enabled: boolean
+  gapHours: number
+  scheduled: { slug: string; title: string; scheduled_for: string }[]
+  nextPublishAt?: string | null
 }
 
 // ── Status display helpers ────────────────────────────────────────────────────
@@ -21,9 +29,22 @@ const STATUS_LABEL: Record<string, string> = {
   verifying_research: 'Review Research',
   writing:            'Writing',
   verifying_draft:    'Review Draft',
+  scheduled:          'Scheduled',
   publishing:         'Publishing',
   published:          'Published',
+  cancelled:          'Cancelled',
   failed:             'Failed',
+}
+
+// Future-friendly relative time ("in 3h", "in 2d") for scheduled slots.
+function until(dt: string): string {
+  const diff = new Date(dt).getTime() - Date.now()
+  if (diff <= 0) return 'now'
+  const m = Math.round(diff / 60000)
+  if (m < 60) return `in ${m}m`
+  const h = Math.round(m / 60)
+  if (h < 48) return `in ${h}h`
+  return `in ${Math.round(h / 24)}d`
 }
 
 function relative(dt: string): string {
@@ -109,7 +130,11 @@ function TopicCard({ topic, onDelete }: { topic: Topic; onDelete: (slug: string)
             <span key={t} className="tag">{t}</span>
           ))}
         </div>
-        <div className="topic-card-meta">{relative(topic.updated_at)}</div>
+        <div className="topic-card-meta">
+          {topic.status === 'scheduled' && topic.scheduled_for
+            ? <span style={{ color: '#7c3aed', fontWeight: 600 }}>Auto-publishes {until(topic.scheduled_for)}</span>
+            : relative(topic.updated_at)}
+        </div>
       </Link>
     </div>
   )
@@ -211,12 +236,56 @@ function NewTopicModal({ onClose, onCreated }: { onClose: () => void; onCreated:
   )
 }
 
+// ── Autopilot status strip ────────────────────────────────────────────────────
+function AutopilotBar({ state }: { state: AutopilotState | null }) {
+  if (!state) return null
+  const next = state.scheduled[0]
+  return (
+    <div
+      className="card"
+      style={{
+        display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap',
+        marginBottom: 20, padding: '12px 16px',
+        borderColor: state.enabled ? 'rgba(124,58,237,0.25)' : 'var(--border)',
+        background: state.enabled ? 'rgba(124,58,237,0.04)' : 'transparent',
+      }}
+    >
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontWeight: 700, fontSize: 13 }}>
+        <span
+          aria-hidden
+          style={{
+            width: 9, height: 9, borderRadius: '50%',
+            background: state.enabled ? '#7c3aed' : '#9ca3af',
+            animation: state.enabled ? 'pulse 1.4s ease-in-out infinite' : 'none',
+          }}
+        />
+        Autopilot {state.enabled ? 'On' : 'Paused'}
+      </span>
+      <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>
+        1 post every {state.gapHours}h
+      </span>
+      {state.scheduled.length > 0 ? (
+        <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>
+          · {state.scheduled.length} scheduled
+          {next && <> · next <strong style={{ color: '#7c3aed' }}>{until(next.scheduled_for)}</strong></>}
+        </span>
+      ) : (
+        <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>· nothing scheduled yet</span>
+      )}
+      <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--text-muted)' }}>
+        Scheduled posts auto-publish unless you reject them first.
+      </span>
+    </div>
+  )
+}
+
 // ── Main Page ─────────────────────────────────────────────────────────────────
 export default function Dashboard() {
   const [topics, setTopics]       = useState<Topic[]>([])
   const [loading, setLoading]     = useState(true)
   const [activeTag, setActiveTag] = useState<string | null>(null)
   const [modal, setModal]         = useState(false)
+  const [autopilot, setAutopilot] = useState<AutopilotState | null>(null)
 
   const [lastRefresh, setLastRefresh] = useState<Date>(new Date())
 
@@ -227,6 +296,11 @@ export default function Dashboard() {
       const next: Topic[] = data.topics || []
       setTopics(next)
       setLastRefresh(new Date())
+      // Refresh autopilot status alongside topics (best-effort, non-blocking).
+      fetch('/api/autopilot')
+        .then(r => (r.ok ? r.json() : null))
+        .then(s => { if (s) setAutopilot(s) })
+        .catch(() => {})
       return next
     } catch {
       return []
@@ -305,6 +379,9 @@ export default function Dashboard() {
             </div>
           </div>
         </div>
+
+        {/* Autopilot status */}
+        <AutopilotBar state={autopilot} />
 
         {/* Tag filter */}
         {allTags.length > 0 && (

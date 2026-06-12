@@ -2,4 +2,11 @@ zDocuments/
 zlog.txt
 zlogs.txt
 .env*
-.claude/settings.local.json
+
+# Local agent/editor state — never commit
+.claude/
+
+# Build artifacts / caches
+*.tsbuildinfo
+blog-agent/dashboard/out/
+blog-agent/dashboard/.next/

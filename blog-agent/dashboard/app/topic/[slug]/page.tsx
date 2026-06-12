@@ -50,12 +50,19 @@ const STEP_ORDER: Record<string, number> = {
   verifying_research: 1,
   writing: 2,
   verifying_draft: 3,
+  scheduled: 4,
   publishing: 4,
   published: 5,
 }
 
 function computeStepStates(status: string, post: any): StepState[] {
   const states: StepState[] = ['pending', 'pending', 'pending', 'pending', 'pending', 'pending']
+
+  // Scheduled: research → draft are done; publishing is queued for its slot (not active yet).
+  if (status === 'scheduled') {
+    for (let i = 0; i < 4; i++) states[i] = 'done'
+    return states
+  }
 
   if (status === 'failed') {
     // Pick the step the worker last attempted, based on what data was persisted.
@@ -154,6 +161,7 @@ export default function TopicPage({ params }: { params: Promise<{ slug: string }
   }
 
   const needsReview = ['verifying_research', 'verifying_draft'].includes(topic.status)
+  const isScheduled = topic.status === 'scheduled'
   const isFailed    = topic.status === 'failed'
   const isPublished = topic.status === 'published'
   const isRunning   = ['queued', 'researching', 'writing', 'publishing'].includes(topic.status)
@@ -708,6 +716,47 @@ export default function TopicPage({ params }: { params: Promise<{ slug: string }
                     <button className="btn btn-outline btn-sm" onClick={() => setShowReject(false)}>Cancel</button>
                     <button className="btn btn-danger btn-sm" onClick={handleReject} disabled={!feedback.trim() || actionLoading}>
                       {actionLoading ? 'Updating...' : 'Reject & Re-run'}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* SCHEDULED — 24h veto window: auto-publishes unless pulled */}
+          {isScheduled && (
+            <div className="pipeline-actions" style={{ borderColor: 'rgba(124,58,237,0.3)', background: 'rgba(124,58,237,0.04)' }}>
+              <div className="pipeline-actions-title">
+                Scheduled to auto-publish{topic.scheduled_for ? ` — ${new Date(topic.scheduled_for).toLocaleString()}` : ''}
+              </div>
+              <div style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 12, lineHeight: 1.6 }}>
+                This post is finished and will go live automatically at its slot. Publish it now, or send
+                feedback to pull it off the schedule and re-draft it (it won&rsquo;t auto-publish after that).
+              </div>
+              <div className="pipeline-actions-row">
+                <button className="btn btn-primary" onClick={handleApprove} disabled={actionLoading}>
+                  {actionLoading ? <><span className="spinner" /> Processing...</> : '↑ Publish Now'}
+                </button>
+                <button className="btn btn-outline" onClick={() => setShowReject(!showReject)} disabled={actionLoading}>
+                  ✕ Send Feedback
+                </button>
+              </div>
+
+              {showReject && (
+                <div className="reject-panel">
+                  <label style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-muted)' }}>
+                    What needs to change? (pulls it from the schedule and re-drafts)
+                  </label>
+                  <textarea
+                    value={feedback}
+                    onChange={e => setFeedback(e.target.value)}
+                    placeholder="e.g. The angle is off, tighten the intro, remove the claim about X..."
+                    autoFocus
+                  />
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+                    <button className="btn btn-outline btn-sm" onClick={() => setShowReject(false)}>Cancel</button>
+                    <button className="btn btn-danger btn-sm" onClick={handleReject} disabled={!feedback.trim() || actionLoading}>
+                      {actionLoading ? 'Updating...' : 'Pull & Re-draft'}
                     </button>
                   </div>
                 </div>

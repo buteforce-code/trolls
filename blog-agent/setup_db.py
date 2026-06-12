@@ -57,6 +57,10 @@ STATEMENTS = [
     # so the research agent executes the strategy instead of researching blind.
     "ALTER TABLE topics ADD COLUMN IF NOT EXISTS brief text",
     "ALTER TABLE topics ADD COLUMN IF NOT EXISTS target_keyword text",
+    # Autopilot: the slot at which a finished post auto-publishes (24h veto window).
+    # status='scheduled' + scheduled_for in the future = waiting; <= now = due to publish.
+    "ALTER TABLE topics ADD COLUMN IF NOT EXISTS scheduled_for timestamptz",
+    "CREATE INDEX IF NOT EXISTS topics_status_sched_idx ON topics (status, scheduled_for)",
     # RLS — service key bypasses, anon key reads
     "ALTER TABLE topics ENABLE ROW LEVEL SECURITY",
     "ALTER TABLE blog_posts ENABLE ROW LEVEL SECURITY",

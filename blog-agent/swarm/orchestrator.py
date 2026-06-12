@@ -64,8 +64,10 @@ STATUS_LABELS = {
     "verifying_research": "Research Ready — Awaiting Approval",
     "writing":            "Writing...",
     "verifying_draft":    "Draft Ready — Awaiting Approval",
+    "scheduled":          "Scheduled — Auto-publishes at its slot",
     "publishing":         "Publishing...",
     "published":          "Published ✓",
+    "cancelled":          "Cancelled",
     "failed":             "Failed",
 }
 
@@ -441,5 +443,10 @@ class BlogOrchestrator:
 
         if current_status == "verifying_research":
             self.run_research(topic_id, slug, title, tags)
-        elif current_status == "verifying_draft":
+        elif current_status in ("verifying_draft", "scheduled"):
+            # Vetoing a 'scheduled' post pulls it off the auto-publish schedule and
+            # re-drafts it with feedback; it lands back at verifying_draft (a manual
+            # review item) and will NOT auto-publish until you approve it.
+            if current_status == "scheduled":
+                _db().table("topics").update({"scheduled_for": None}).eq("id", topic_id).execute()
             self.run_writing(topic_id, slug, title, feedback=feedback)

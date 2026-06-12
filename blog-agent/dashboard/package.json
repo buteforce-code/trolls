@@ -5,14 +5,21 @@
   "scripts": {
     "dev": "next dev -p 3005",
     "build": "next build",
+    "remotion:studio": "remotion studio remotion/index.ts --port 3006",
+    "remotion:render:sample": "node scripts/render-topic-video.mjs --out out/blog-promo-sample.mp4",
+    "remotion:render:topic": "node scripts/render-topic-video.mjs",
     "prestart": "node scripts/write-gcp-creds.js",
     "start": "next start -p 3005"
   },
   "dependencies": {
+    "@remotion/bundler": "^4.0.454",
+    "@remotion/cli": "^4.0.454",
+    "@remotion/renderer": "^4.0.454",
     "@supabase/supabase-js": "^2.47.0",
     "next": "15.2.4",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "remotion": "^4.0.454"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

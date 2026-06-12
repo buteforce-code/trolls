@@ -75,6 +75,8 @@ def main():
     g.add_argument("--list",    action="store_true", help="List all topics and their statuses")
     g.add_argument("--delete",  metavar="SLUG", help="Delete a topic and its blog post entirely")
     g.add_argument("--reset",   metavar="SLUG", help="Reset a failed topic to its last reviewable stage")
+    g.add_argument("--autopilot", action="store_true",
+                   help="Run one autonomous tick: publish due posts, keep the buffer full, refill the queue")
 
     parser.add_argument("--tags",     default="", help="Comma-separated tags (used with --topic)")
     parser.add_argument("--feedback", default="", help="Rejection feedback (used with --reject)")
@@ -84,6 +86,13 @@ def main():
     args = parser.parse_args()
     orch = BlogOrchestrator()
     db = _db()
+
+    # ── Autopilot (one autonomous tick) ───────────────────────────────────────
+    if args.autopilot:
+        from swarm.autopilot import run_tick
+        for line in run_tick(orch, db):
+            print(line, flush=True)
+        return
 
     # ── List ────────────────────────────────────────────────────────────────
     if args.list:
@@ -145,8 +154,11 @@ def main():
             print(f"[approve] Research approved. Starting draft...")
             orch.run_writing(topic_id, slug, topic["title"])
             print(f"✓ Draft ready. Open dashboard to review.")
-        elif status == "verifying_draft":
-            print(f"[approve] Draft approved. Publishing...")
+        elif status in ("verifying_draft", "scheduled"):
+            # 'scheduled' = autopilot has it queued for a future slot; approving
+            # means "publish now" instead of waiting out the veto window.
+            label = "Draft approved" if status == "verifying_draft" else "Publishing ahead of schedule"
+            print(f"[approve] {label}. Publishing...")
             result = orch.run_publish(topic_id, slug)
             if result.get("published") or result.get("dry_run"):
                 url = result.get("published_url", "(dry run)")

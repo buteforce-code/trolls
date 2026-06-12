@@ -1,0 +1,45 @@
+name: Blog Autopilot
+
+# Fires the autonomous blog engine on a schedule. Each run pings the dashboard's
+# secret-protected /api/autopilot/tick, which spawns `run.py --autopilot` on Render.
+# Cadence between published posts is enforced server-side by per-post scheduled_for
+# timestamps (PUBLISH_GAP_HOURS), so an hourly trigger is plenty — most ticks are a
+# cheap "anything due? no" no-op.
+#
+# Required repo secrets (Settings → Secrets and variables → Actions):
+#   AUTOPILOT_URL          e.g. https://buteforce-blog-dashboard.onrender.com/api/autopilot/tick
+#   AUTOPILOT_TICK_SECRET  must match the AUTOPILOT_TICK_SECRET env var on the Render service
+
+on:
+  schedule:
+    - cron: '17 * * * *'   # hourly at :17 (off the top of the hour to dodge cron congestion)
+  workflow_dispatch: {}     # lets you fire a tick manually from the Actions tab
+
+concurrency:
+  group: blog-autopilot
+  cancel-in-progress: false
+
+jobs:
+  tick:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger autopilot tick
+        env:
+          AUTOPILOT_URL: ${{ secrets.AUTOPILOT_URL }}
+          AUTOPILOT_SECRET: ${{ secrets.AUTOPILOT_TICK_SECRET }}
+        run: |
+          if [ -z "$AUTOPILOT_URL" ] || [ -z "$AUTOPILOT_SECRET" ]; then
+            echo "::error::AUTOPILOT_URL and AUTOPILOT_TICK_SECRET repo secrets must be set."
+            exit 1
+          fi
+          code=$(curl -s -o /tmp/tick.out -w "%{http_code}" -X POST "$AUTOPILOT_URL" \
+            -H "Authorization: Bearer $AUTOPILOT_SECRET" \
+            -H "Content-Type: application/json" \
+            --max-time 60 || echo "000")
+          echo "HTTP $code"
+          cat /tmp/tick.out || true
+          echo ""
+          if [ "$code" != "200" ]; then
+            echo "::error::Autopilot tick failed (HTTP $code)."
+            exit 1
+          fi

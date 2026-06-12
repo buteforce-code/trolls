@@ -1,0 +1,284 @@
+"""
+Autopilot — the autonomous engine.
+
+One idempotent `run_tick()`:
+  1. Publish any 'scheduled' post whose scheduled_for has arrived (at most one per
+     tick; re-space the rest so a backlog after downtime never dumps all at once).
+  2. Keep AUTOPILOT_BUFFER finished posts scheduled ahead — research + write the next
+     queued topic, then move it to 'scheduled' at the next free slot (24h veto window).
+  3. When the queue is empty, run the ideator to generate fresh India-first topics.
+
+Cadence is enforced by per-post `scheduled_for` timestamps, so the tick can fire on a
+coarse schedule (hourly is plenty). Designed to be triggered by GitHub Actions hitting
+the dashboard's secret-protected /api/autopilot/tick, which spawns `run.py --autopilot`.
+
+Env knobs (all optional, with sane defaults):
+  AUTOPILOT_ENABLED              "true" | "false"  (kill switch)         default true
+  PUBLISH_GAP_HOURS              hours between published posts            default 24
+  AUTOPILOT_BUFFER              finished posts to keep scheduled ahead    default 1
+  AUTOPILOT_IDEATE_BATCH        topics to generate when the queue empties default 8
+  AUTOPILOT_MAX_PRODUCE_PER_TICK cap on research+write work per tick      default 1
+"""
+from __future__ import annotations
+
+import os
+import re
+from datetime import datetime, timedelta, timezone
+from typing import Any
+
+# A topic in one of these states means a tick is (or was) actively working it.
+ACTIVE_STATES = ("researching", "writing", "publishing")
+# How recently an active row must have been touched to count as "a live tick".
+# Older than this = a previous run almost certainly crashed; don't deadlock on it.
+BUSY_FRESH_MINUTES = 20
+
+
+# ── time helpers ──────────────────────────────────────────────────────────────
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _iso(dt: datetime) -> str:
+    return dt.astimezone(timezone.utc).isoformat()
+
+
+def _parse(ts: str | None) -> datetime | None:
+    if not ts:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    except Exception:
+        return None
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, str(default)).strip())
+    except Exception:
+        return default
+
+
+def _slugify(text: str) -> str:
+    slug = text.lower()
+    slug = re.sub(r"[^\w\s-]", "", slug)
+    slug = re.sub(r"[\s_]+", "-", slug)
+    slug = re.sub(r"-+", "-", slug).strip("-")
+    return slug[:60]
+
+
+# ── db reads ──────────────────────────────────────────────────────────────────
+def _status(db: Any, slug: str) -> str | None:
+    r = db.table("topics").select("status").eq("slug", slug).limit(1).execute().data
+    return r[0]["status"] if r else None
+
+
+def _is_busy(db: Any) -> str | None:
+    """Return a slug if another tick appears to be mid-flight, else None.
+    Lets overlapping cron fires stand down without any external lock service.
+    """
+    cutoff = _now() - timedelta(minutes=BUSY_FRESH_MINUTES)
+    rows = (db.table("topics").select("slug,status,updated_at")
+            .in_("status", list(ACTIVE_STATES)).execute().data or [])
+    for r in rows:
+        touched = _parse(r.get("updated_at"))
+        if touched and touched > cutoff:
+            return r["slug"]
+    return None
+
+
+def _future_scheduled_count(db: Any, now_iso: str) -> int:
+    rows = (db.table("topics").select("id")
+            .eq("status", "scheduled").gt("scheduled_for", now_iso).execute().data or [])
+    return len(rows)
+
+
+def _next_slot(db: Any, gap: timedelta, now: datetime) -> datetime:
+    """The next free publish slot: one gap after the latest anchor (the furthest
+    future scheduled post, or the most recent publish), never in the past.
+    First post ever (no anchor) → schedule for now, so it goes out on the next tick.
+    """
+    anchor: datetime | None = None
+
+    sched = (db.table("topics").select("scheduled_for")
+             .eq("status", "scheduled").order("scheduled_for", desc=True)
+             .limit(1).execute().data or [])
+    if sched:
+        anchor = _parse(sched[0].get("scheduled_for"))
+
+    pub = (db.table("blog_posts").select("published_at")
+           .not_.is_("published_at", "null").order("published_at", desc=True)
+           .limit(1).execute().data or [])
+    if pub:
+        pub_dt = _parse(pub[0].get("published_at"))
+        if pub_dt and (anchor is None or pub_dt > anchor):
+            anchor = pub_dt
+
+    if anchor is None:
+        return now
+    return max(anchor + gap, now)
+
+
+def _pick_next_queued(db: Any) -> dict | None:
+    rows = (db.table("topics").select("id,slug,title,tags")
+            .eq("status", "queued").order("created_at", desc=False)
+            .limit(1).execute().data or [])
+    return rows[0] if rows else None
+
+
+# ── tick stages ───────────────────────────────────────────────────────────────
+def _publish_due(db: Any, orch: Any, gap: timedelta, log: list[str]) -> int:
+    """Publish the single most-overdue scheduled post. Re-space any other overdue
+    posts forward from now so downtime never collapses the cadence into a dump.
+    """
+    now = _now()
+    due = (db.table("topics").select("id,slug,scheduled_for")
+           .eq("status", "scheduled").lte("scheduled_for", _iso(now))
+           .order("scheduled_for", desc=False).execute().data or [])
+    if not due:
+        return 0
+
+    first, rest = due[0], due[1:]
+    published = 0
+    log.append(f"publish due: {first['slug']} (slot {first.get('scheduled_for')})")
+    try:
+        orch.run_publish(first["id"], first["slug"])
+        log.append(f"  -> published {first['slug']}")
+        published = 1
+    except Exception as exc:  # run_publish already marked the topic failed
+        log.append(f"  -> publish FAILED {first['slug']}: {exc}")
+
+    slot = now + gap
+    for t in rest:
+        db.table("topics").update({
+            "scheduled_for": _iso(slot), "updated_at": _iso(now),
+        }).eq("id", t["id"]).execute()
+        log.append(f"  re-spaced {t['slug']} -> {_iso(slot)}")
+        slot += gap
+    return published
+
+
+def _produce_one(db: Any, orch: Any, topic: dict, slot: datetime, log: list[str]) -> bool:
+    """Research → write the topic (auto-advancing both gates), then schedule it.
+    Returns True only if it reached 'scheduled'. Any stage failure leaves the topic
+    in 'failed' (the orchestrator handles that) and returns False so the caller moves on.
+    """
+    tid, slug, title = topic["id"], topic["slug"], topic["title"]
+    tags = topic.get("tags") or []
+    log.append(f"produce: {slug}")
+
+    orch.run_research(tid, slug, title, tags)
+    if _status(db, slug) != "verifying_research":
+        log.append(f"  research did not complete; leaving {slug}")
+        return False
+
+    orch.run_writing(tid, slug, title)
+    if _status(db, slug) != "verifying_draft":
+        log.append(f"  writing did not complete; leaving {slug}")
+        return False
+
+    db.table("topics").update({
+        "status": "scheduled", "scheduled_for": _iso(slot), "updated_at": _iso(_now()),
+    }).eq("id", tid).execute()
+    db.table("blog_posts").update({"last_error": None}).eq("topic_id", tid).execute()
+    log.append(f"  -> scheduled {slug} for {_iso(slot)}")
+    return True
+
+
+def _refill(db: Any, orch: Any, batch: int, log: list[str]) -> int:
+    """Generate a fresh batch of topics when the roadmap queue is empty."""
+    from swarm.agents.ideator import run_ideation
+
+    existing = db.table("topics").select("slug,title").limit(2000).execute().data or []
+    existing_slugs = {r["slug"] for r in existing}
+    existing_titles = [r["title"] for r in existing if r.get("title")]
+
+    log.append(f"queue empty — ideating {batch} new topics...")
+    try:
+        ideas = run_ideation(model=orch.model, existing_titles=existing_titles, batch=batch)
+    except Exception as exc:
+        log.append(f"  ideation crashed: {exc}")
+        return 0
+
+    now = _iso(_now())
+    inserted = 0
+    for idea in ideas:
+        slug = _slugify(idea["title"])
+        if not slug or slug in existing_slugs:
+            continue
+        try:
+            db.table("topics").insert({
+                "slug": slug,
+                "title": idea["title"],
+                "status": "queued",
+                "tags": idea.get("tags") or [],
+                "brief": idea.get("brief") or "",
+                "target_keyword": idea.get("target_keyword") or "",
+                "created_at": now,
+                "updated_at": now,
+            }).execute()
+            existing_slugs.add(slug)
+            inserted += 1
+            log.append(f"  + ideated: {slug}")
+        except Exception as exc:
+            log.append(f"  ideation insert failed for {slug}: {exc}")
+    return inserted
+
+
+def _maintain_buffer(db: Any, orch: Any, gap: timedelta, buffer: int,
+                     ideate_batch: int, max_produce: int, log: list[str]) -> int:
+    """Keep `buffer` finished posts scheduled ahead, producing at most `max_produce`
+    per tick so a single tick stays bounded in runtime.
+    """
+    produced = 0
+    attempts = 0
+    max_attempts = max_produce + 3  # tolerate a couple of bad topics without stalling
+    while produced < max_produce and attempts < max_attempts:
+        now = _now()
+        if _future_scheduled_count(db, _iso(now)) >= buffer:
+            break
+
+        topic = _pick_next_queued(db)
+        if topic is None:
+            if _refill(db, orch, ideate_batch, log) <= 0:
+                log.append("nothing queued and ideation added nothing — idle")
+                break
+            topic = _pick_next_queued(db)
+            if topic is None:
+                break
+
+        slot = _next_slot(db, gap, now)
+        attempts += 1
+        try:
+            if _produce_one(db, orch, topic, slot, log):
+                produced += 1
+        except Exception as exc:  # orchestrator marked it failed; try the next topic
+            log.append(f"  produce crashed for {topic.get('slug')}: {exc}")
+    return produced
+
+
+# ── entry point ───────────────────────────────────────────────────────────────
+def run_tick(orch: Any, db: Any) -> list[str]:
+    """Run one autopilot tick. Returns a human-readable log (also printed by run.py)."""
+    log: list[str] = [f"[autopilot] tick @ {_iso(_now())}"]
+
+    if os.environ.get("AUTOPILOT_ENABLED", "true").strip().lower() == "false":
+        log.append("AUTOPILOT_ENABLED=false — standing down (no-op)")
+        return log
+
+    gap = timedelta(hours=max(1, _env_int("PUBLISH_GAP_HOURS", 24)))
+    buffer = max(1, _env_int("AUTOPILOT_BUFFER", 1))
+    ideate_batch = max(1, _env_int("AUTOPILOT_IDEATE_BATCH", 8))
+    max_produce = max(1, _env_int("AUTOPILOT_MAX_PRODUCE_PER_TICK", 1))
+    log.append(f"config: gap={gap}, buffer={buffer}, ideate_batch={ideate_batch}, "
+               f"max_produce={max_produce}")
+
+    busy = _is_busy(db)
+    if busy:
+        log.append(f"another tick is mid-flight (active: {busy}) — standing down")
+        return log
+
+    published = _publish_due(db, orch, gap, log)
+    produced = _maintain_buffer(db, orch, gap, buffer, ideate_batch, max_produce, log)
+    log.append(f"[autopilot] done: published={published} produced={produced}")
+    return log
