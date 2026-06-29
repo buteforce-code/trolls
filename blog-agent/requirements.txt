@@ -1,6 +1,10 @@
 # Buteforce Blog Agent — Python dependencies
 google-adk>=0.5.0
 google-genai>=1.0.0
+# OpenAI provider: ADK's LiteLlm wrapper drives gpt-4o via litellm; openai SDK
+# powers image generation + vision QA in swarm/tools/image_tool.py.
+litellm>=1.44.0
+openai>=1.40.0
 supabase>=2.9.0
 python-dotenv>=1.0.0
 tavily-python>=0.3.0

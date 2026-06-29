@@ -16,7 +16,7 @@ Six agents plus a schema step:
 1. **Research** — reads already-published posts + brand data, then Tavily (web/X/Reddit/LinkedIn/IG), YouTube, GitHub → structured JSON digest with an India-first `buteforce_angle` and a `target_keyword`.
 2. **Writer** — digest → 1,400–2,000-word MDX, anti-fluff rules, India-first ICP, SEO keyword placement.
 3. **Humaniser** — strips AI tells, rewrites in Dhyan's voice.
-4. **Imager** — Imagen (Vertex AI) hero + inline images with a vision QA gate.
+4. **Imager** — OpenAI image generation (dall-e-3) hero + inline images with a gpt-4o vision QA gate. **Off by default** (`ENABLE_IMAGES=false`); when off, posts publish text-only.
 5. **Linker** — injects 2–4 contextual internal/external backlinks.
 6. **Schema (JSON-LD)** — generates Article + FAQ structured data (`schema_ld.py`); also injects `image` + `faqs` into the MDX frontmatter so the live site renders BlogPosting + FAQPage rich results. Full graph persisted to `blog_posts.schema_json`.
 7. **Social (`social.py`)** — repurposes the finished post into a LinkedIn + X kit (carousel, the 5 LinkedIn post types, company-page post, X threads, single tweets, hashtags), India-first in Dhyan's voice. Persisted to `blog_posts.social_json` and surfaced as copy-ready blocks on the dashboard topic page.
@@ -43,7 +43,9 @@ npm ci
 
 Environment:
 
-- Copy `.env.example` to `.env` in `blog-agent/` and set: `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `SUPABASE_DB_URL`, `ADK_GEMINI_MODEL`, Tavily/YouTube/GitHub keys, and (for live publish) `AGENT_SECRET_KEY` + `SITE_API_URL`.
+- Copy `.env.example` to `.env` in `blog-agent/` and set: `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `SUPABASE_DB_URL`, `OPENAI_API_KEY` (provider defaults to `LLM_PROVIDER=openai`, model `OPENAI_MODEL=gpt-4o`), Tavily/YouTube/GitHub keys, and (for live publish) `AGENT_SECRET_KEY` + `SITE_API_URL`.
+
+> **LLM provider.** The swarm runs on OpenAI (`gpt-4o`) via ADK's `LiteLlm` wrapper — see `swarm/llm.py`. All eight agents share one model. To fall back to Gemini, set `LLM_PROVIDER=gemini` and the `ADK_GEMINI_MODEL` / Google keys. Image generation is opt-in: `ENABLE_IMAGES=true` (+ `OPENAI_IMAGE_MODEL`, default `dall-e-3`).
 - Copy `.env.example` to `dashboard/.env.local` (or map only required keys).
 
 Database:

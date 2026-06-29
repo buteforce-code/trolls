@@ -1,12 +1,19 @@
 """
-Image generation tools for the blog agent.
-  - generate_imagen: Vertex AI Imagen via google-genai client
-  - vision_qa_check: Gemini Vision gate — flags text/spelling errors in images
-  - upload_to_supabase: Upload PNG bytes to Supabase Storage
-  - generate_and_qa: Full pipeline (generate → QA → upload) with retries
-  - ensure_bucket: Idempotent bucket bootstrap
+Image generation tools for the blog agent — OpenAI backend.
+
+  - images_enabled: read the ENABLE_IMAGES kill switch
+  - generate_image:  OpenAI image API (dall-e-3 / gpt-image-1) → PNG bytes
+  - vision_qa_check: OpenAI vision (gpt-4o) gate — flags text/spelling in images
+  - upload_to_supabase: upload PNG bytes to Supabase Storage
+  - generate_and_qa: full pipeline (generate → QA → upload) with retries
+  - ensure_bucket: idempotent bucket bootstrap
+
+Image generation is OFF by default (ENABLE_IMAGES=false). When disabled, the
+caller (swarm/agents/imager.py) short-circuits before any of this runs, so no
+OpenAI image spend happens. Flip ENABLE_IMAGES=true to turn it on.
 """
 from __future__ import annotations
+import base64
 import json
 import os
 import uuid
@@ -17,19 +24,35 @@ from supabase import create_client, Client
 BUCKET_NAME = "blog-images"
 _MAX_QA_RETRIES = 3
 
+# OpenAI image models support a fixed set of sizes, not arbitrary ratios.
+# Map the planner's aspect_ratio hints onto the closest supported size.
+#   dall-e-3:    1024x1024 | 1792x1024 | 1024x1792
+#   gpt-image-1: 1024x1024 | 1536x1024 | 1024x1536
+_SIZE_BY_RATIO_DALLE = {
+    "16:9": "1792x1024",
+    "4:3": "1792x1024",
+    "1:1": "1024x1024",
+    "9:16": "1024x1792",
+    "3:4": "1024x1792",
+}
+_SIZE_BY_RATIO_GPTIMAGE = {
+    "16:9": "1536x1024",
+    "4:3": "1536x1024",
+    "1:1": "1024x1024",
+    "9:16": "1024x1536",
+    "3:4": "1024x1536",
+}
 
-def _genai_client():
-    from google import genai
 
-    project = os.environ.get("GOOGLE_CLOUD_PROJECT", "")
-    location = os.environ.get("GOOGLE_CLOUD_LOCATION", "us-central1")
-    use_vertex = os.environ.get("GOOGLE_GENAI_USE_VERTEXAI", "true").lower() == "true"
+def images_enabled() -> bool:
+    """Master kill switch. Images are opt-in."""
+    return os.environ.get("ENABLE_IMAGES", "false").strip().lower() == "true"
 
-    if use_vertex and project:
-        return genai.Client(vertexai=True, project=project, location=location)
 
-    api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_AI_API_KEY", "")
-    return genai.Client(api_key=api_key)
+def _openai_client():
+    from openai import OpenAI
+
+    return OpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
 
 def _supabase() -> Client:
@@ -48,64 +71,77 @@ def ensure_bucket() -> None:
         print(f"  [storage] Bucket check failed: {e}", flush=True)
 
 
-def generate_imagen(prompt: str, aspect_ratio: str = "16:9") -> Optional[bytes]:
+def _size_for(model: str, aspect_ratio: str) -> str:
+    table = _SIZE_BY_RATIO_GPTIMAGE if model.startswith("gpt-image") else _SIZE_BY_RATIO_DALLE
+    return table.get(aspect_ratio, "1024x1024")
+
+
+def generate_image(prompt: str, aspect_ratio: str = "16:9") -> Optional[bytes]:
     """
-    Generate an image via Vertex AI Imagen. Returns PNG bytes or None on failure.
+    Generate an image via the OpenAI image API. Returns PNG bytes or None.
+    Model is chosen by OPENAI_IMAGE_MODEL (default: dall-e-3).
     aspect_ratio: "16:9" hero | "4:3" inline | "1:1" square
     """
-    from google.genai import types as genai_types
-
-    model = os.environ.get("IMAGEN_MODEL", "imagen-3.0-generate-001")
-    client = _genai_client()
+    model = os.environ.get("OPENAI_IMAGE_MODEL", "dall-e-3")
+    size = _size_for(model, aspect_ratio)
+    client = _openai_client()
 
     try:
-        response = client.models.generate_images(
-            model=model,
-            prompt=prompt,
-            config=genai_types.GenerateImagesConfig(
-                number_of_images=1,
-                aspect_ratio=aspect_ratio,
-                safety_filter_level="BLOCK_ONLY_HIGH",
-                person_generation="ALLOW_ADULT",
-            ),
-        )
-        if response.generated_images:
-            return response.generated_images[0].image.image_bytes
+        kwargs = {
+            "model": model,
+            "prompt": prompt,
+            "size": size,
+            "n": 1,
+        }
+        # dall-e-3 returns a URL by default; force base64 so we get bytes directly.
+        # gpt-image-1 always returns base64 and rejects response_format.
+        if not model.startswith("gpt-image"):
+            kwargs["response_format"] = "b64_json"
+            kwargs["quality"] = "hd"
+
+        response = client.images.generate(**kwargs)
+        b64 = response.data[0].b64_json
+        if b64:
+            return base64.b64decode(b64)
         return None
     except Exception as e:
-        print(f"  [imagen] Generation error: {e}", flush=True)
+        print(f"  [image] Generation error ({model}): {e}", flush=True)
         return None
 
 
 def vision_qa_check(image_bytes: bytes) -> dict:
     """
-    Run Gemini Vision QA on an image.
-    Returns {"ok": bool, "issues": list[str]}
+    Run OpenAI vision QA on an image.
+    Returns {"ok": bool, "issues": list[str]}.
     Fails open (ok=True) to avoid blocking the publish pipeline on transient errors.
     """
-    from google.genai import types as genai_types
+    model = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o")
+    client = _openai_client()
 
-    model = os.environ.get("ADK_GEMINI_MODEL", "gemini-2.0-flash")
-    client = _genai_client()
-
+    data_url = "data:image/png;base64," + base64.b64encode(image_bytes).decode("ascii")
     prompt = (
         "Inspect this image carefully for any visible text, words, labels, captions, "
         "or icon text. List every text string you can see. "
         "Flag any that is misspelled, garbled, broken, or contains odd characters. "
         'Return ONLY valid JSON: {"ok": true, "issues": []} '
         'or {"ok": false, "issues": ["description of problem"]}. '
-        "If there is no text at all in the image, return {\"ok\": true, \"issues\": []}."
+        'If there is no text at all in the image, return {"ok": true, "issues": []}.'
     )
 
     try:
-        response = client.models.generate_content(
+        response = client.chat.completions.create(
             model=model,
-            contents=[
-                genai_types.Part.from_bytes(data=image_bytes, mime_type="image/png"),
-                prompt,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {"type": "image_url", "image_url": {"url": data_url}},
+                    ],
+                }
             ],
         )
-        text = (response.text or "").strip()
+        text = (response.choices[0].message.content or "").strip()
         start = text.find("{")
         end = text.rfind("}") + 1
         if start >= 0:
@@ -147,19 +183,19 @@ def generate_and_qa(
     Returns None if all retries fail.
     """
     for attempt in range(1, _MAX_QA_RETRIES + 1):
-        image_bytes = generate_imagen(prompt, aspect_ratio)
+        image_bytes = generate_image(prompt, aspect_ratio)
         if not image_bytes:
-            print(f"  [imagen] Attempt {attempt}: generation returned nothing", flush=True)
+            print(f"  [image] Attempt {attempt}: generation returned nothing", flush=True)
             continue
 
         qa = vision_qa_check(image_bytes)
         if qa.get("ok", True):
             url = upload_to_supabase(image_bytes, slug, image_type)
             if url:
-                print(f"  [imagen] {image_type} OK (attempt {attempt}): {url}", flush=True)
+                print(f"  [image] {image_type} OK (attempt {attempt}): {url}", flush=True)
                 return url
         else:
             print(f"  [qa] Attempt {attempt} failed: {qa.get('issues', [])}", flush=True)
 
-    print(f"  [imagen] All {_MAX_QA_RETRIES} attempts failed for {image_type}", flush=True)
+    print(f"  [image] All {_MAX_QA_RETRIES} attempts failed for {image_type}", flush=True)
     return None

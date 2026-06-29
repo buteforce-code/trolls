@@ -4,26 +4,28 @@ services:
     runtime: node
     rootDir: blog-agent/dashboard
     buildCommand: python -m pip install -r ../requirements.txt && npm ci && npm run build
-    # Write GCP credentials JSON from env var to temp file before starting
-    startCommand: bash -c 'echo "$GOOGLE_CREDENTIALS_JSON" > /tmp/gcp-creds.json && npm run start'
+    startCommand: npm run start
     healthCheckPath: /
     envVars:
+      # ── LLM provider (OpenAI) ──────────────────────────────────────────────
+      - key: LLM_PROVIDER
+        value: openai
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_MODEL
+        value: gpt-4o
+      # ── Image generation (off by default) ──────────────────────────────────
+      - key: ENABLE_IMAGES
+        value: "false"
+      - key: OPENAI_IMAGE_MODEL
+        value: dall-e-3
+      - key: OPENAI_VISION_MODEL
+        value: gpt-4o
+      # ── Gemini fallback (only consulted when LLM_PROVIDER=gemini) ───────────
       - key: GOOGLE_AI_API_KEY
         sync: false
       - key: GEMINI_API_KEY
         sync: false
-      - key: GOOGLE_GENAI_USE_VERTEXAI
-        value: "true"
-      - key: GOOGLE_CLOUD_PROJECT
-        value: buteforce
-      - key: GOOGLE_CLOUD_LOCATION
-        value: us-central1
-      - key: GOOGLE_APPLICATION_CREDENTIALS
-        value: /tmp/gcp-creds.json
-      - key: GOOGLE_CREDENTIALS_JSON
-        sync: false
-      - key: IMAGEN_MODEL
-        value: imagen-3.0-generate-001
       - key: ADK_GEMINI_MODEL
         value: gemini-2.5-flash
       - key: PYTHONUTF8

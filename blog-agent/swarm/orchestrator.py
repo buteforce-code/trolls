@@ -124,9 +124,23 @@ async def _run_agent(agent: LlmAgent, prompt: str, session_id: str, retries: int
         except Exception as exc:
             last_err = exc
             msg = str(exc).lower()
-            is_quota = "resource exhausted" in msg or "429" in msg or "quota" in msg
-            # 503/UNAVAILABLE/overloaded = transient Google capacity spike — also worth retrying.
-            is_unavailable = "503" in msg or "unavailable" in msg or "overloaded" in msg or "high demand" in msg
+            # Rate-limit / quota — OpenAI (429, "rate limit", "insufficient_quota")
+            # and Gemini ("resource exhausted", "quota").
+            is_quota = (
+                "resource exhausted" in msg
+                or "429" in msg
+                or "quota" in msg
+                or "rate limit" in msg
+                or "ratelimit" in msg
+            )
+            # Transient capacity / server errors worth retrying — OpenAI (500/502/503,
+            # "overloaded", "service unavailable") and Gemini (503/UNAVAILABLE).
+            is_unavailable = (
+                "503" in msg or "502" in msg or "500" in msg
+                or "unavailable" in msg or "overloaded" in msg
+                or "high demand" in msg or "timeout" in msg
+                or "timed out" in msg or "apiconnection" in msg
+            )
             if (is_quota or is_unavailable) and attempt < retries - 1:
                 wait = 20 * (attempt + 1)
                 reason = "Quota" if is_quota else "Model unavailable (503)"
@@ -144,8 +158,11 @@ def _run(agent: LlmAgent, prompt: str, session_id: str) -> str:
 # ── Orchestrator ─────────────────────────────────────────────────────────────
 class BlogOrchestrator:
     def __init__(self) -> None:
-        model_name = os.environ.get("ADK_GEMINI_MODEL", "gemini-2.0-flash")
-        self.model = model_name  # ADK accepts model name string directly
+        from swarm.llm import make_text_model, model_label
+        # Provider-agnostic: OpenAI (LiteLlm) by default, Gemini as a fallback.
+        # ADK's LlmAgent accepts either a LiteLlm instance or a model-name string.
+        self.model = make_text_model()
+        print(f"[orchestrator] LLM model: {model_label()}", flush=True)
         self.research_agent  = make_research_agent(self.model)
         self.writer_agent    = make_writer_agent(self.model)
         self.humaniser_agent = make_humaniser_agent(self.model)

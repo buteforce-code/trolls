@@ -135,7 +135,13 @@ def run_imaging(
     Full imaging pipeline.
     Returns (updated_mdx, hero_image_url, images_metadata_list).
     """
-    from swarm.tools.image_tool import generate_and_qa, ensure_bucket
+    from swarm.tools.image_tool import generate_and_qa, ensure_bucket, images_enabled
+
+    # Kill switch: when ENABLE_IMAGES is off, skip the planner LLM call and all
+    # image generation. The post publishes text-only with no hero image.
+    if not images_enabled():
+        print("  [imager] ENABLE_IMAGES is off — skipping image generation.", flush=True)
+        return mdx, None, []
 
     ensure_bucket()
 
