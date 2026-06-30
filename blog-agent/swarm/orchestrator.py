@@ -153,7 +153,13 @@ async def _run_agent(agent: LlmAgent, prompt: str, session_id: str, retries: int
 
 
 def _run(agent: LlmAgent, prompt: str, session_id: str) -> str:
-    return asyncio.run(_run_agent(agent, prompt, session_id))
+    # Reclaim the per-stage ADK runner/session and large tool payloads before the
+    # next stage so peak RSS stays bounded on memory-constrained hosts (Render 512MB).
+    try:
+        return asyncio.run(_run_agent(agent, prompt, session_id))
+    finally:
+        import gc
+        gc.collect()
 
 
 # ── Orchestrator ─────────────────────────────────────────────────────────────

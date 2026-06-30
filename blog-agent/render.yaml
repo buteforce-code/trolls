@@ -30,6 +30,13 @@ services:
         value: gemini-2.5-flash
       - key: PYTHONUTF8
         value: "1"
+      # ── Memory tuning (512MB instance is tight: Node + spawned Python share it) ──
+      # Cap Node's heap so a spawned Python pipeline run has headroom before OOM.
+      - key: NODE_OPTIONS
+        value: "--max-old-space-size=256"
+      # Limit glibc malloc arenas — large, free RSS reduction for threaded Python.
+      - key: MALLOC_ARENA_MAX
+        value: "2"
       - key: TAVILY_API_KEY
         sync: false
       - key: YOUTUBE_API_KEY

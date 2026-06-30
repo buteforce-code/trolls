@@ -348,5 +348,9 @@ def produce_all_queued(orch: Any, db: Any) -> list[str]:
                 scheduled += 1
         except Exception as exc:  # orchestrator marks the topic failed; move on
             log.append(f"  produce crashed for {topic.get('slug')}: {exc}")
+        finally:
+            # Free each topic's research/draft payloads before the next one so a long
+            # catch-up doesn't accumulate RSS to the OOM line on small instances.
+            gc.collect()
     log.append(f"[produce-all] done: scheduled={scheduled}")
     return log
