@@ -146,6 +146,13 @@ curl -X POST https://<your-render-host>/api/autopilot/produce-all \
 
 Or locally: `python run.py --produce-all`. Bounded by `PRODUCE_ALL_MAX` (default 200).
 
+> **On a 512 MB Render instance, prefer the hourly tick over produce-all.** Each tick
+> writes **one** queued topic in a short-lived process that exits and frees its memory,
+> whereas produce-all writes the whole backlog in one long-lived process and can exceed
+> 512 MB (OOM). The tick now drains the seeded backlog one-per-tick (publishing still
+> drips 1/day), so on a small instance just let the cron run — the queue clears in about
+> a day. Use produce-all only on ≥1 GB instances.
+
 ## Analytics
 
 `/stats` (linked from the dashboard header) shows pipeline status, publishing cadence,

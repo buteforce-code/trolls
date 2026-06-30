@@ -271,17 +271,22 @@ def _maintain_buffer(db: Any, orch: Any, gap: timedelta, buffer: int,
     max_attempts = max_produce + 3  # tolerate a couple of bad topics without stalling
     while produced < max_produce and attempts < max_attempts:
         now = _now()
-        if _future_scheduled_count(db, _iso(now)) >= buffer:
-            break
 
         topic = _pick_next_queued(db)
         if topic is None:
+            # No seeded/queued backlog left — only top up the steady-state buffer via
+            # ideation (so the queue can't run dry), bounded by `buffer`.
+            if _future_scheduled_count(db, _iso(now)) >= buffer:
+                break
             if _refill(db, orch, ideate_batch, log) <= 0:
                 log.append("nothing queued and ideation added nothing — idle")
                 break
             topic = _pick_next_queued(db)
             if topic is None:
                 break
+        # A queued topic exists → drain it (one per tick, regardless of `buffer`) so a
+        # seeded backlog gets written out steadily instead of stalling at the buffer.
+        # Publishing stays on cadence because each post is scheduled a gap apart.
 
         slot = _next_slot(db, gap, now)
         attempts += 1
