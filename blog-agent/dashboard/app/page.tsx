@@ -373,6 +373,7 @@ export default function Dashboard() {
                 />
                 Live
               </span>
+              <Link href="/stats" className="btn btn-outline">📊 Analytics</Link>
               <button className="btn btn-primary" onClick={() => setModal(true)}>
                 + New Topic
               </button>

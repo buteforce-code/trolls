@@ -32,6 +32,7 @@ from google.adk.sessions import InMemorySessionService
 from google.genai import types as genai_types
 
 from swarm.agents.research import make_research_agent
+from swarm.agents.auditor import make_audit_agent
 from swarm.agents.writer import make_writer_agent
 from swarm.agents.humaniser import make_humaniser_agent
 from swarm.agents.publisher import make_publisher_agent
@@ -164,6 +165,7 @@ class BlogOrchestrator:
         self.model = make_text_model()
         print(f"[orchestrator] LLM model: {model_label()}", flush=True)
         self.research_agent  = make_research_agent(self.model)
+        self.audit_agent     = make_audit_agent(self.model)
         self.writer_agent    = make_writer_agent(self.model)
         self.humaniser_agent = make_humaniser_agent(self.model)
         self.publisher_agent = make_publisher_agent(self.model)
@@ -278,9 +280,45 @@ class BlogOrchestrator:
             _mark_failed(slug, topic_id, "research", parsed.get("_parse_error") or "no usable digest")
         else:
             _upsert_post(topic_id, {"last_error": None})
+            # ── Audit gate: review the digest before writing (best-effort) ──────
+            self.run_audit(topic_id, slug)
             _update_status(slug, "verifying_research")
             print(f"[research] Done. Status -> verifying_research", flush=True)
         return parsed
+
+    # ── Stage: Audit ─────────────────────────────────────────────────────────
+    def run_audit(self, topic_id: str, slug: str) -> dict:
+        """Audit the stored research digest before writing.
+
+        Best-effort and fail-open: stores the verdict in blog_posts.audit_json and
+        returns it, but NEVER raises — a flaky audit must not block the pipeline.
+        The autopilot reads the verdict to gate (a 'reject' triggers one re-research);
+        the dashboard surfaces it at the research-review gate.
+        """
+        verdict: dict
+        try:
+            post = _get_post(topic_id)
+            research_json = post.get("research_json") or "{}"
+            print(f"[audit] Auditing research for {slug}...", flush=True)
+            raw = _run(self.audit_agent, f"Audit this research digest:\n\n{research_json}",
+                       f"audit-{topic_id}")
+            verdict = self._extract_digest(raw, slug)
+            if verdict.get("_parse_error"):
+                # Unparseable audit = fail open so we don't stall on the gate.
+                verdict = {"passed": True, "recommendation": "proceed",
+                           "summary": "audit output unparseable — proceeding"}
+        except Exception as exc:
+            print(f"[audit] Audit failed (non-fatal): {exc}", flush=True)
+            verdict = {"passed": True, "recommendation": "proceed",
+                       "summary": f"audit skipped: {exc}", "_audit_error": str(exc)}
+
+        try:
+            _upsert_post(topic_id, {"audit_json": json.dumps(verdict)})
+        except Exception as exc:
+            print(f"[audit] could not persist audit_json: {exc}", flush=True)
+        print(f"[audit] verdict: {verdict.get('recommendation', 'proceed')} "
+              f"(score={verdict.get('score')})", flush=True)
+        return verdict
 
     # ── Stage: Write → Humanise → Image → Link ──────────────────────────────
     def run_writing(self, topic_id: str, slug: str, title: str, feedback: str = "") -> dict:

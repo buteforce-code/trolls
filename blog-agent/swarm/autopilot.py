@@ -21,6 +21,7 @@ Env knobs (all optional, with sane defaults):
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 from datetime import datetime, timedelta, timezone
@@ -126,6 +127,22 @@ def _pick_next_queued(db: Any) -> dict | None:
     return rows[0] if rows else None
 
 
+def _read_audit(db: Any, topic_id: str) -> dict:
+    """Read the auditor's verdict (blog_posts.audit_json). Tolerates jsonb returned
+    as a dict or a string; returns {} if absent/unparseable (treated as 'proceed')."""
+    rows = (db.table("blog_posts").select("audit_json")
+            .eq("topic_id", topic_id).limit(1).execute().data or [])
+    raw = rows[0].get("audit_json") if rows else None
+    if not raw:
+        return {}
+    if isinstance(raw, dict):
+        return raw
+    try:
+        return json.loads(raw)
+    except Exception:
+        return {}
+
+
 # ── tick stages ───────────────────────────────────────────────────────────────
 def _publish_due(db: Any, orch: Any, gap: timedelta, log: list[str]) -> int:
     """Publish the single most-overdue scheduled post. Re-space any other overdue
@@ -171,6 +188,25 @@ def _produce_one(db: Any, orch: Any, topic: dict, slot: datetime, log: list[str]
     if _status(db, slug) != "verifying_research":
         log.append(f"  research did not complete; leaving {slug}")
         return False
+
+    # ── Audit gate ──────────────────────────────────────────────────────────
+    # run_research already ran + stored the audit verdict. On a hard 'reject',
+    # re-research once, then re-audit. A topic that fails audit twice is left at
+    # verifying_research (a human review item) and NOT auto-written/published.
+    verdict = _read_audit(db, tid)
+    rec = (verdict.get("recommendation") or "proceed").lower()
+    if rec == "reject":
+        log.append(f"  audit REJECTED {slug} (score={verdict.get('score')}) — re-researching once")
+        orch.run_research(tid, slug, title, tags)
+        if _status(db, slug) != "verifying_research":
+            log.append(f"  re-research did not complete; leaving {slug}")
+            return False
+        verdict = _read_audit(db, tid)
+        if (verdict.get("recommendation") or "proceed").lower() == "reject":
+            log.append(f"  audit rejected {slug} again — holding for human review, skipping")
+            return False
+    log.append(f"  audit {verdict.get('recommendation', 'proceed')} "
+               f"(score={verdict.get('score')}) for {slug}")
 
     orch.run_writing(tid, slug, title)
     if _status(db, slug) != "verifying_draft":
@@ -281,4 +317,36 @@ def run_tick(orch: Any, db: Any) -> list[str]:
     published = _publish_due(db, orch, gap, log)
     produced = _maintain_buffer(db, orch, gap, buffer, ideate_batch, max_produce, log)
     log.append(f"[autopilot] done: published={published} produced={produced}")
+    return log
+
+
+def produce_all_queued(orch: Any, db: Any) -> list[str]:
+    """One-shot catch-up: research → audit → write EVERY queued topic now, scheduling
+    each on the publish cadence (24h apart) so the hourly autopilot tick then drips
+    them out. This is the 'write all the stuck/queued posts now' action — published
+    posts are untouched (only status='queued' topics are picked up).
+
+    Each topic leaves 'queued' after one pass (→ scheduled, failed, or held at
+    verifying_research if it fails audit twice), so the loop always terminates.
+    """
+    log: list[str] = [f"[produce-all] start @ {_iso(_now())}"]
+    if os.environ.get("AUTOPILOT_ENABLED", "true").strip().lower() == "false":
+        log.append("AUTOPILOT_ENABLED=false — standing down (no-op)")
+        return log
+
+    gap = timedelta(hours=max(1, _env_int("PUBLISH_GAP_HOURS", 24)))
+    max_topics = max(1, _env_int("PRODUCE_ALL_MAX", 200))
+    scheduled = 0
+    for _ in range(max_topics):
+        topic = _pick_next_queued(db)
+        if topic is None:
+            log.append("no more queued topics")
+            break
+        slot = _next_slot(db, gap, _now())
+        try:
+            if _produce_one(db, orch, topic, slot, log):
+                scheduled += 1
+        except Exception as exc:  # orchestrator marks the topic failed; move on
+            log.append(f"  produce crashed for {topic.get('slug')}: {exc}")
+    log.append(f"[produce-all] done: scheduled={scheduled}")
     return log

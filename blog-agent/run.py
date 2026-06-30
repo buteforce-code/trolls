@@ -77,6 +77,8 @@ def main():
     g.add_argument("--reset",   metavar="SLUG", help="Reset a failed topic to its last reviewable stage")
     g.add_argument("--autopilot", action="store_true",
                    help="Run one autonomous tick: publish due posts, keep the buffer full, refill the queue")
+    g.add_argument("--produce-all", action="store_true", dest="produce_all",
+                   help="Catch-up: research+audit+write EVERY queued topic now and schedule them on cadence")
 
     parser.add_argument("--tags",     default="", help="Comma-separated tags (used with --topic)")
     parser.add_argument("--feedback", default="", help="Rejection feedback (used with --reject)")
@@ -91,6 +93,13 @@ def main():
     if args.autopilot:
         from swarm.autopilot import run_tick
         for line in run_tick(orch, db):
+            print(line, flush=True)
+        return
+
+    # ── Produce-all (one-shot catch-up of every queued topic) ─────────────────
+    if args.produce_all:
+        from swarm.autopilot import produce_all_queued
+        for line in produce_all_queued(orch, db):
             print(line, flush=True)
         return
 

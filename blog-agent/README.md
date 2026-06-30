@@ -11,16 +11,17 @@ every agent loads).
 queued → researching → verifying_research → writing → verifying_draft → publishing → published
 ```
 
-Six agents plus a schema step:
+Seven agents plus a schema step:
 
 1. **Research** — reads already-published posts + brand data, then Tavily (web/X/Reddit/LinkedIn/IG), YouTube, GitHub → structured JSON digest with an India-first `buteforce_angle` and a `target_keyword`.
-2. **Writer** — digest → 1,400–2,000-word MDX, anti-fluff rules, India-first ICP, SEO keyword placement.
-3. **Humaniser** — strips AI tells, rewrites in Dhyan's voice.
-4. **Imager** — OpenAI image generation (dall-e-3) hero + inline images with a gpt-4o vision QA gate. **Off by default** (`ENABLE_IMAGES=false`); when off, posts publish text-only.
-5. **Linker** — injects 2–4 contextual internal/external backlinks.
-6. **Schema (JSON-LD)** — generates Article + FAQ structured data (`schema_ld.py`); also injects `image` + `faqs` into the MDX frontmatter so the live site renders BlogPosting + FAQPage rich results. Full graph persisted to `blog_posts.schema_json`.
-7. **Social (`social.py`)** — repurposes the finished post into a LinkedIn + X kit (carousel, the 5 LinkedIn post types, company-page post, X threads, single tweets, hashtags), India-first in Dhyan's voice. Persisted to `blog_posts.social_json` and surfaced as copy-ready blocks on the dashboard topic page.
-8. **Publisher** — POSTs the MDX to the site's secure API.
+2. **Audit** (`auditor.py`) — quality + fact gate run right after research: checks key facts are backed by the source signals, the SEO target is coherent, the angle is non-obvious + India-first, dedup risk vs already-published, and ICP fit. Verdict (`passed`/`score`/`recommendation`) is stored in `blog_posts.audit_json` and surfaced at the research-review gate. In autopilot a `reject` triggers one automatic re-research; a second reject holds the topic for human review instead of writing.
+3. **Writer** — digest → 1,400–2,000-word MDX, anti-fluff rules, India-first ICP, SEO keyword placement.
+4. **Humaniser** — strips AI tells, rewrites in Dhyan's voice.
+5. **Imager** — OpenAI image generation (dall-e-3) hero + inline images with a gpt-4o vision QA gate. **Off by default** (`ENABLE_IMAGES=false`); when off, posts publish text-only.
+6. **Linker** — injects 2–4 contextual internal/external backlinks.
+7. **Schema (JSON-LD)** — generates Article + FAQ structured data (`schema_ld.py`); also injects `image` + `faqs` into the MDX frontmatter so the live site renders BlogPosting + FAQPage rich results. Full graph persisted to `blog_posts.schema_json`.
+8. **Social (`social.py`)** — repurposes the finished post into a LinkedIn + X kit (carousel, the 5 LinkedIn post types, company-page post, X threads, single tweets, hashtags), India-first in Dhyan's voice. Persisted to `blog_posts.social_json` and surfaced as copy-ready blocks on the dashboard topic page.
+9. **Publisher** — POSTs the MDX to the site's secure API.
 
 Two human approval gates (research, draft) with a rejection → re-run-with-feedback loop. Driven by
 the Next.js dashboard (`dashboard/app/api/`) or the `run.py` CLI.
@@ -130,6 +131,46 @@ hand: `python run.py --autopilot`, or trigger the workflow from the Actions tab.
 Open the scheduled post in the dashboard before its slot: **Publish Now** ships it
 immediately, **Send Feedback** pulls it off the schedule and re-drafts it with your notes
 (it won't auto-publish again — it returns to manual review), and **Delete** drops it.
+
+### Catch-up: write the whole queue now (`produce-all`)
+
+To clear a backlog (e.g. a pile of `queued` topics after downtime) without waiting one
+tick per day, fire the one-shot catch-up. It researches + audits + writes **every**
+queued topic immediately and schedules them on the cadence; the hourly tick then drips
+them out. Published posts are untouched.
+
+```bash
+curl -X POST https://<your-render-host>/api/autopilot/produce-all \
+  -H "Authorization: Bearer $AUTOPILOT_TICK_SECRET"
+```
+
+Or locally: `python run.py --produce-all`. Bounded by `PRODUCE_ALL_MAX` (default 200).
+
+## Analytics
+
+`/stats` (linked from the dashboard header) shows pipeline status, publishing cadence,
+content quality (avg words, audit score, research confidence, schema/social/hero
+coverage), top tags, the upcoming auto-publish schedule, and **blog views**.
+
+### View tracking
+
+Real views are recorded by `POST /api/track` (CORS-open) into the `blog_views` table
+(service-key only; not publicly readable). Add this once to the **published blog post
+template** on the live site so every view is counted:
+
+```html
+<script>
+  fetch("https://<your-render-host>/api/track", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ slug: "<post-slug>", path: location.pathname, referrer: document.referrer }),
+    keepalive: true,
+  }).catch(() => {});
+</script>
+```
+
+No-JS fallback: `<img src="https://<your-render-host>/api/track?slug=<post-slug>" width="1" height="1" alt="">`.
+Until the snippet is live the analytics page shows content/pipeline stats and 0 views.
 
 ## Render
 
