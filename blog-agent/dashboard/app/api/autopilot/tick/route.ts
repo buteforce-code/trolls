@@ -27,6 +27,16 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   }
 
+  // Fail loudly at the trigger if the LLM key is missing, instead of returning 200
+  // and letting the spawned Python job die silently in the background.
+  const provider = (process.env.LLM_PROVIDER || 'openai').toLowerCase()
+  if (provider === 'openai' && !process.env.OPENAI_API_KEY) {
+    return NextResponse.json(
+      { error: 'OPENAI_API_KEY not configured on the server — set it in the Render env' },
+      { status: 503 },
+    )
+  }
+
   console.log('[autopilot] tick triggered — spawning run.py --autopilot')
   const { pid } = spawnPythonJob(['--autopilot'], 'autopilot', 'autopilot')
 

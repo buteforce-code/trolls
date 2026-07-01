@@ -28,6 +28,14 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   }
 
+  const provider = (process.env.LLM_PROVIDER || 'openai').toLowerCase()
+  if (provider === 'openai' && !process.env.OPENAI_API_KEY) {
+    return NextResponse.json(
+      { error: 'OPENAI_API_KEY not configured on the server — set it in the Render env' },
+      { status: 503 },
+    )
+  }
+
   console.log('[autopilot] produce-all triggered — spawning run.py --produce-all')
   const { pid } = spawnPythonJob(['--produce-all'], 'produce-all', 'produce-all')
 
