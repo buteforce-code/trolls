@@ -23,9 +23,10 @@ from __future__ import annotations
 
 import json
 import os
-import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
+
+from swarm.slugs import slugify
 
 # A topic in one of these states means a tick is (or was) actively working it.
 ACTIVE_STATES = ("researching", "writing", "publishing")
@@ -58,14 +59,6 @@ def _env_int(name: str, default: int) -> int:
         return int(os.environ.get(name, str(default)).strip())
     except Exception:
         return default
-
-
-def _slugify(text: str) -> str:
-    slug = text.lower()
-    slug = re.sub(r"[^\w\s-]", "", slug)
-    slug = re.sub(r"[\s_]+", "-", slug)
-    slug = re.sub(r"-+", "-", slug).strip("-")
-    return slug[:60]
 
 
 # ── db reads ──────────────────────────────────────────────────────────────────
@@ -239,7 +232,7 @@ def _refill(db: Any, orch: Any, batch: int, log: list[str]) -> int:
     now = _iso(_now())
     inserted = 0
     for idea in ideas:
-        slug = _slugify(idea["title"])
+        slug = slugify(idea["title"])
         if not slug or slug in existing_slugs:
             continue
         try:

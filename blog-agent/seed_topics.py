@@ -16,10 +16,12 @@ from __future__ import annotations
 
 import argparse
 import os
-import re
 import sys
 from datetime import datetime
 from pathlib import Path
+
+from swarm.slugs import slugify
+
 
 def _db():
     # Lazy imports so the ROADMAP can be imported (e.g. for codegen / --dry-run)
@@ -31,12 +33,7 @@ def _db():
     return create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_SERVICE_KEY"])
 
 
-def _slugify(text: str) -> str:
-    slug = text.lower()
-    slug = re.sub(r"[^\w\s-]", "", slug)
-    slug = re.sub(r"[\s_]+", "-", slug)
-    slug = re.sub(r"-+", "-", slug).strip("-")
-    return slug[:60]
+from swarm.slugs import slugify
 
 
 # title, target_keyword, tags, brief(angle)
@@ -195,7 +192,7 @@ def seed(dry_run: bool = False) -> None:
     print(f"Seeding {len(ROADMAP)} roadmap topics" + (" (dry run)" if dry_run else "") + "...\n")
     if dry_run:
         for i, (title, kw, tags, _brief) in enumerate(ROADMAP, 1):
-            print(f"  [{i:>2}] {_slugify(title)}\n        kw: {kw}  tags: {', '.join(tags)}")
+            print(f"  [{i:>2}] {slugify(title)}\n        kw: {kw}  tags: {', '.join(tags)}")
         print("\nDry run — nothing written.")
         return
 
@@ -204,7 +201,7 @@ def seed(dry_run: bool = False) -> None:
     inserted = updated = skipped = 0
 
     for title, target_keyword, tags, brief in ROADMAP:
-        slug = _slugify(title)
+        slug = slugify(title)
         existing = db.table("topics").select("id,status").eq("slug", slug).limit(1).execute()
 
         if existing.data:

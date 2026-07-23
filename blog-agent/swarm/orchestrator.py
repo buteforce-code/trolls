@@ -99,6 +99,23 @@ def _mark_failed(slug: str, topic_id: str, where: str, err: Exception | str) -> 
     _update_status(slug, "failed")
 
 
+def _record_step_failure(topic_id: str, step: str, err: Exception | str) -> None:
+    """Surface a non-blocking stage failure on the dashboard, not just in the log.
+
+    Schema and social are enrichment steps, so they must not kill an otherwise
+    good draft. But a `print` in a background worker is invisible — schema has
+    been failing silently, which is why no published post carries FAQPage
+    structured data. Persisting to `last_error` makes it visible at the review
+    gate while still letting the draft through.
+    """
+    detail = f"[{step}] {err}"[:4000]
+    print(f"[writer] {step} FAILED (non-blocking, review before publish): {err}", flush=True)
+    try:
+        _upsert_post(topic_id, {"last_error": detail})
+    except Exception as inner:
+        print(f"[orchestrator] failed to persist {step} error: {inner}", flush=True)
+
+
 def _get_post(topic_id: str) -> dict:
     r = _db().table("blog_posts").select("*").eq("topic_id", topic_id).limit(1).execute()
     return r.data[0] if r.data else {}
@@ -160,6 +177,21 @@ def _run(agent: LlmAgent, prompt: str, session_id: str) -> str:
     finally:
         import gc
         gc.collect()
+
+
+# ── Draft length gate ────────────────────────────────────────────────────────
+# The writer prompt has always asked for 1,400–2,000 words, but nothing enforced
+# it. After the Gemini → gpt-4o switch (2026-06-29) output silently halved and
+# five ~550-word posts shipped before anyone noticed. The prompt is advisory;
+# this gate is not.
+MIN_BODY_WORDS = 1_100
+_LENGTH_RETRIES = 1
+
+
+def _body_word_count(mdx: str) -> int:
+    """Word count of the post body, excluding YAML frontmatter."""
+    body = mdx.split("---", 2)[-1] if mdx.lstrip().startswith("---") else mdx
+    return len(body.split())
 
 
 # ── Orchestrator ─────────────────────────────────────────────────────────────
@@ -335,6 +367,42 @@ class BlogOrchestrator:
             _mark_failed(slug, topic_id, "writer", exc)
             raise
 
+    def _enforce_length(self, draft: str, writer_prompt: str, topic_id: str) -> str:
+        """Re-run the writer while the draft is under the floor; raise if it never gets there.
+
+        Failing loudly is deliberate — a short draft lands the topic in `failed`
+        for human review instead of quietly publishing another thin post.
+        """
+        for attempt in range(1, _LENGTH_RETRIES + 1):
+            words = _body_word_count(draft)
+            if words >= MIN_BODY_WORDS:
+                return draft
+
+            print(
+                f"[writer] Draft is {words} words, below the {MIN_BODY_WORDS} floor. "
+                f"Expanding (attempt {attempt}/{_LENGTH_RETRIES})...",
+                flush=True,
+            )
+            draft = _run(
+                self.writer_agent,
+                f"{writer_prompt}\n\n"
+                f"YOUR PREVIOUS DRAFT WAS {words} WORDS — REJECTED. It must be 1,400–2,000.\n"
+                f"Rewrite it in full at the required length. Do not summarise or reuse the\n"
+                f"short version. Add depth where you asserted without evidence: name the\n"
+                f"mechanism, give the specific example, cite the number and its source.\n"
+                f"Do not pad with restatement.\n\nPREVIOUS DRAFT:\n{draft}",
+                f"writer-{topic_id}-expand-{attempt}",
+            )
+
+        words = _body_word_count(draft)
+        if words < MIN_BODY_WORDS:
+            raise RuntimeError(
+                f"Writer produced {words} words after {_LENGTH_RETRIES} retries "
+                f"(floor is {MIN_BODY_WORDS}). Holding for human review rather than "
+                f"publishing a thin post."
+            )
+        return draft
+
     def _run_writing_inner(self, topic_id: str, slug: str, title: str, feedback: str = "") -> dict:
         post = _get_post(topic_id)
         research_json = post.get("research_json", "{}")
@@ -349,18 +417,30 @@ class BlogOrchestrator:
             f"{feedback_section}"
         )
         draft = _run(self.writer_agent, writer_prompt, f"writer-{topic_id}")
-        print(f"[writer] Draft ready ({len(draft.split())} words). Running humaniser...", flush=True)
+        draft = self._enforce_length(draft, writer_prompt, topic_id)
+        print(f"[writer] Draft ready ({_body_word_count(draft)} words). Running humaniser...", flush=True)
 
         humaniser_prompt = (
-            f"Humanise this draft blog post — make it sound exactly like Dhyan Karthik wrote it:\n\n{draft}"
+            "Humanise this draft blog post — make it sound exactly like Dhyan Karthik wrote it.\n"
+            "Preserve its length: do not summarise, condense, or drop sections.\n\n"
+            f"{draft}"
         )
         humanised = _run(self.humaniser_agent, humaniser_prompt, f"humaniser-{topic_id}")
+
+        # The humaniser has trimmed drafts below the floor before; keep the longer text.
+        if _body_word_count(humanised) < MIN_BODY_WORDS <= _body_word_count(draft):
+            print(
+                f"[writer] Humaniser cut {_body_word_count(draft)} → "
+                f"{_body_word_count(humanised)} words; keeping the writer's draft.",
+                flush=True,
+            )
+            humanised = draft
         print(f"[writer] Humanised. Running imager...", flush=True)
 
         # Fetch topic tags for the image planner
         topic_row = _db().table("topics").select("tags").eq("id", topic_id).limit(1).execute()
         tags: list[str] = (topic_row.data[0].get("tags") or []) if topic_row.data else []
-        word_count_pre = len(humanised.split())
+        word_count_pre = _body_word_count(humanised)
 
         imaged_mdx, hero_image_url, images_meta = run_imaging(
             mdx=humanised,
@@ -386,7 +466,7 @@ class BlogOrchestrator:
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         linked_mdx = re.sub(r'(?m)^date:.*$', f'date: "{today}"', linked_mdx, count=1)
 
-        word_count = len(linked_mdx.split())
+        word_count = _body_word_count(linked_mdx)
 
         # Extract meta from front-matter
         meta_title = title
@@ -412,9 +492,14 @@ class BlogOrchestrator:
                 _run_agent_fn=_run,
                 session_id=topic_id,
             )
-            word_count = len(linked_mdx.split())
+            word_count = _body_word_count(linked_mdx)
+            if not (schema_ld or {}).get("@graph"):
+                _record_step_failure(
+                    topic_id, "Schema",
+                    "returned no @graph — post will publish without Article/FAQPage markup",
+                )
         except Exception as exc:
-            print(f"[writer] Schema generation failed (non-fatal): {exc}", flush=True)
+            _record_step_failure(topic_id, "Schema", exc)
 
         # Social kit (LinkedIn carousel + 5 post types + X threads). Best-effort — never blocks.
         social_kit: dict = {}
@@ -427,7 +512,7 @@ class BlogOrchestrator:
                 session_id=topic_id,
             )
         except Exception as exc:
-            print(f"[writer] Social generation failed (non-fatal): {exc}", flush=True)
+            _record_step_failure(topic_id, "Social", exc)
 
         _upsert_post(topic_id, {
             "mdx_draft": draft,

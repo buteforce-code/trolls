@@ -15,10 +15,14 @@ Seven agents plus a schema step:
 
 1. **Research** — reads already-published posts + brand data, then Tavily (web/X/Reddit/LinkedIn/IG), YouTube, GitHub → structured JSON digest with an India-first `buteforce_angle` and a `target_keyword`.
 2. **Audit** (`auditor.py`) — quality + fact gate run right after research: checks key facts are backed by the source signals, the SEO target is coherent, the angle is non-obvious + India-first, dedup risk vs already-published, and ICP fit. Verdict (`passed`/`score`/`recommendation`) is stored in `blog_posts.audit_json` and surfaced at the research-review gate. In autopilot a `reject` triggers one automatic re-research; a second reject holds the topic for human review instead of writing.
-3. **Writer** — digest → 1,400–2,000-word MDX, anti-fluff rules, India-first ICP, SEO keyword placement.
+3. **Writer** — digest → 1,400–2,000-word MDX, anti-fluff rules, India-first ICP, SEO keyword placement. A **length gate** in the orchestrator (`MIN_BODY_WORDS = 1100`, frontmatter excluded) re-runs the writer once with the rejection reason, then fails the topic to human review rather than publishing a thin post. The prompt alone was never enough: after the 2026-06-29 Gemini→gpt-4o switch, output silently halved and five ~550-word posts shipped before anyone noticed.
 4. **Humaniser** — strips AI tells, rewrites in Dhyan's voice.
 5. **Imager** — OpenAI image generation (dall-e-3) hero + inline images with a gpt-4o vision QA gate. **Off by default** (`ENABLE_IMAGES=false`); when off, posts publish text-only.
-6. **Linker** — injects 2–4 contextual internal/external backlinks.
+6. **Linker** — injects 2–4 contextual internal/external backlinks, then hands the result to
+   `swarm/links.py` for a **deterministic validation pass** (the LLM's link rules are advisory;
+   this is not). It rewrites absolute `www.buteforce.com` URLs to relative paths, and unwraps —
+   keeping the anchor text, dropping only the link — any `/blog/<slug>` that was never published,
+   any bare-homepage "citation", and any external URL the research digest never surfaced.
 7. **Schema (JSON-LD)** — generates Article + FAQ structured data (`schema_ld.py`); also injects `image` + `faqs` into the MDX frontmatter so the live site renders BlogPosting + FAQPage rich results. Full graph persisted to `blog_posts.schema_json`.
 8. **Social (`social.py`)** — repurposes the finished post into a LinkedIn + X kit (carousel, the 5 LinkedIn post types, company-page post, X threads, single tweets, hashtags), India-first in Dhyan's voice. Persisted to `blog_posts.social_json` and surfaced as copy-ready blocks on the dashboard topic page.
 9. **Publisher** — POSTs the MDX to the site's secure API.

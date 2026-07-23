@@ -27,14 +27,7 @@ load_dotenv(Path(__file__).resolve().parent / ".env")
 
 from supabase import create_client
 from swarm.orchestrator import BlogOrchestrator
-
-
-def _slugify(text: str) -> str:
-    slug = text.lower()
-    slug = re.sub(r"[^\w\s-]", "", slug)
-    slug = re.sub(r"[\s_]+", "-", slug)
-    slug = re.sub(r"-+", "-", slug).strip("-")
-    return slug[:60]
+from swarm.slugs import slugify
 
 
 def _db():
@@ -43,7 +36,7 @@ def _db():
 
 def _ensure_topic(title: str, tags: list[str]) -> dict:
     """Create topic in Supabase if it doesn't exist. Return the record."""
-    slug = _slugify(title)
+    slug = slugify(title)
     db = _db()
     existing = db.table("topics").select("*").eq("slug", slug).limit(1).execute()
     if existing.data:
