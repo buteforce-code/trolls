@@ -1,4 +1,8 @@
-# Buteforce Blog Agent
+# Trolls
+
+> **Trolls** is Buteforce's marketing agent swarm — the autonomous engine that researches,
+> writes, and ships buteforce.com's blog. The product is *Trolls*; the content it writes serves
+> the *Buteforce* brand. (Renamed from "Buteforce Blog Agent" 2026-07-25.)
 
 Stateful, India-first AI pipeline for blog creation. State lives in Supabase; each stage is a
 separate Google ADK agent run. Positioning: **Chennai's Industrial AI Company** — see

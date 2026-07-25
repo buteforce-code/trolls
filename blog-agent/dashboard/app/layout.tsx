@@ -2,7 +2,7 @@ import type { Metadata } from 'next'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'Buteforce Blog Agent',
+  title: 'Trolls — Marketing Agent Swarm',
   description: 'Autonomous blog content pipeline - research, write, humanise, publish.',
   icons: {
     icon: '/brand/buteforce-mark.svg',
@@ -20,7 +20,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 <img src="/brand/buteforce-mark.svg" alt="" />
               </span>
               <img className="nav-logo-wordmark" src="/brand/buteforce-wordmark.png" alt="Buteforce" />
-              <span className="nav-tag">Blog Agent</span>
+              <span className="nav-tag">Trolls</span>
             </div>
           </div>
         </nav>

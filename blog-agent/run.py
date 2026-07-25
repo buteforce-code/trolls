@@ -59,7 +59,7 @@ def _ensure_topic(title: str, tags: list[str]) -> dict:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Buteforce Blog Agent CLI")
+    parser = argparse.ArgumentParser(description="Trolls — Marketing Agent Swarm CLI")
     g = parser.add_mutually_exclusive_group(required=True)
     g.add_argument("--topic",   help="Start a new blog topic (runs research automatically)")
     g.add_argument("--approve", metavar="SLUG", help="Approve current stage for a topic slug")
