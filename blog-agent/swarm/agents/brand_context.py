@@ -75,6 +75,21 @@ def _seo_context() -> str:
 """.strip()
 
 
+def _signals_context() -> str:
+    """Google Search Console signals — what has actually earned impressions/rank in real
+    search data. Injected into the Ideator (topic selection) and Research agents so the
+    engine doubles down on proven demand instead of guessing. Empty string if no export
+    has been captured yet, so agents fall back cleanly to the strategy clusters.
+    """
+    signals = _read(_CONFIG_ROOT / "gsc-signals.md")
+    if not signals:
+        return ""
+    return f"""
+=== GSC SIGNALS (proven search demand — double down here) ===
+{signals[:2600]}
+""".strip()
+
+
 def _strategy_context() -> str:
     """Positioning + ICP geography. Repo-local and authoritative — it overrides any
     older global ICP framing baked into the brand bible or agent prompts.

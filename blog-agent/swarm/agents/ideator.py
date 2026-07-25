@@ -27,7 +27,12 @@ from swarm.tools.tavily_tool import (
 )
 from swarm.tools.youtube_tool import youtube_search
 from swarm.tools.site_tool import get_published_posts, get_site_brand_data
-from swarm.agents.brand_context import _brand_context, _strategy_context, _seo_context
+from swarm.agents.brand_context import (
+    _brand_context,
+    _strategy_context,
+    _seo_context,
+    _signals_context,
+)
 
 
 def make_ideator_agent(model: Any, batch: int) -> LlmAgent:
@@ -47,6 +52,8 @@ you must generate fresh, non-duplicate angles grounded in what's happening now.
 {_strategy_context()}
 
 {_seo_context()}
+
+{_signals_context()}
 
 ━━━ STEP 1 — KNOW WHAT EXISTS (do this first) ━━━
 1. Call get_published_posts() — read every title/angle Buteforce has already shipped.
@@ -77,6 +84,11 @@ Return ONLY a raw JSON array (no markdown fence, no commentary) of EXACTLY {batc
 ]
 
 ━━━ RULES ━━━
+- DOUBLE DOWN ON PROVEN DEMAND. The GSC SIGNALS block above names the clusters that already
+  earn real impressions. Weight the batch toward them — until that cluster is saturated
+  (10+ deep posts), at least half of every batch must extend it, using the defect-level buyer
+  long-tails listed there (one named defect + one throughput number per title). Only spend the
+  remainder on new authority/ecosystem angles.
 - India-first, always. Never aim a topic at a US/UK/UAE/AU audience.
 - ZERO duplicates: if a title overlaps an existing post or the EXISTING TITLES list, drop it and invent another.
 - Each topic must serve the ICP and map to a real keyword cluster — high commercial or authority intent, no fluff.
