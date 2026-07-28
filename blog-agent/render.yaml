@@ -7,6 +7,27 @@ services:
     startCommand: npm run start
     healthCheckPath: /
     envVars:
+      # ── Dashboard auth (REQUIRED — production fails closed without these) ──
+      # APP_SECRET signs the session cookie; DASHBOARD_PASSWORD is the operator
+      # password. If either is missing, middleware.ts 401s every route rather
+      # than reopening the dashboard.
+      - key: APP_SECRET
+        generateValue: true
+      - key: DASHBOARD_PASSWORD
+        sync: false
+      # ── Spend ceilings (hard stops, checked before each agent call) ────────
+      - key: MAX_RUN_COST_USD
+        value: "3.00"
+      - key: MAX_DAILY_COST_USD
+        value: "25.00"
+      - key: SWARM_TELEMETRY
+        value: "true"
+      # ── View-data privacy (DPDP Act / GDPR) ────────────────────────────────
+      # Unset VIEW_HASH_SALT means session ids are dropped, not weakly hashed.
+      - key: VIEW_HASH_SALT
+        generateValue: true
+      - key: VIEW_RETENTION_DAYS
+        value: "90"
       # ── LLM provider (OpenAI) ──────────────────────────────────────────────
       - key: LLM_PROVIDER
         value: openai

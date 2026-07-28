@@ -1,5 +1,6 @@
 import type { Metadata } from 'next'
 import './globals.css'
+import NavActions from './nav-actions'
 
 export const metadata: Metadata = {
   title: 'Trolls — Marketing Agent Swarm',
@@ -22,6 +23,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <img className="nav-logo-wordmark" src="/brand/buteforce-wordmark.png" alt="Buteforce" />
               <span className="nav-tag">Trolls</span>
             </div>
+            <NavActions />
           </div>
         </nav>
         {children}

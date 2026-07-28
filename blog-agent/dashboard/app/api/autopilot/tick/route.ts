@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { spawnPythonJob } from '../../../../lib/python'
+import { bearerMatches } from '../../../../lib/auth'
 
 export const dynamic = 'force-dynamic'
 
@@ -21,9 +22,7 @@ export async function POST(request: Request) {
     )
   }
 
-  const auth = request.headers.get('authorization') || ''
-  const token = auth.replace(/^Bearer\s+/i, '').trim()
-  if (token !== secret) {
+  if (!bearerMatches(request.headers.get('authorization'), secret)) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   }
 

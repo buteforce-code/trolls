@@ -1,0 +1,51 @@
+name: View Data Retention Purge
+
+# Deletes expired blog_views rows once a day.
+#
+# This exists because a retention policy nobody enforces is the thing a regulator
+# finds. Under India's DPDP Act (Rules notified 13 Nov 2025, full compliance
+# 13 May 2027) and the GDPR, storage limitation is an obligation, not a
+# preference — and view rows carry a pseudonymised session id, a coarse client
+# family and a page path, which is personal data.
+#
+# Retention length is set by VIEW_RETENTION_DAYS on the Render service
+# (default 90, hard-capped at 400 in lib/privacy.ts).
+#
+# Required repo secrets:
+#   PURGE_URL              https://<render-host>/api/privacy/purge
+#   AUTOPILOT_TICK_SECRET  same shared secret the autopilot cron uses
+
+on:
+  schedule:
+    - cron: '41 3 * * *'   # daily at 03:41 UTC, off-peak
+  workflow_dispatch: {}
+
+concurrency:
+  group: retention-purge
+  cancel-in-progress: false
+
+jobs:
+  purge:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Purge expired view rows
+        env:
+          PURGE_URL: ${{ secrets.PURGE_URL }}
+          PURGE_SECRET: ${{ secrets.AUTOPILOT_TICK_SECRET }}
+        run: |
+          if [ -z "$PURGE_URL" ] || [ -z "$PURGE_SECRET" ]; then
+            echo "::error::PURGE_URL and AUTOPILOT_TICK_SECRET repo secrets must be set."
+            exit 1
+          fi
+          code=$(curl -s -o /tmp/purge.out -w "%{http_code}" -X POST "$PURGE_URL" \
+            -H "Authorization: Bearer $PURGE_SECRET" \
+            -H "Content-Type: application/json" \
+            --max-time 60 || echo "000")
+          echo "HTTP $code"
+          cat /tmp/purge.out || true
+          echo ""
+          # A failed purge is a compliance gap, not a cosmetic problem — fail loudly.
+          if [ "$code" != "200" ]; then
+            echo "::error::Retention purge failed (HTTP $code)."
+            exit 1
+          fi

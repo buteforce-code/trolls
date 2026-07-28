@@ -11,6 +11,8 @@ import json
 import os
 import re
 import sys
+import time
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -40,6 +42,10 @@ from swarm.agents.imager import run_imaging
 from swarm.agents.linker import run_linking
 from swarm.agents.schema_ld import run_schema_ld
 from swarm.agents.social import run_social
+from swarm import geo
+from swarm import guards
+from swarm import telemetry as tm
+from swarm.telemetry_db import make_recorder
 
 if os.name == "nt":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
@@ -121,9 +127,74 @@ def _get_post(topic_id: str) -> dict:
     return r.data[0] if r.data else {}
 
 
+# ── Telemetry ────────────────────────────────────────────────────────────────
+# One recorder per process. Module-level rather than threaded through every
+# signature because the sub-runners (linker, schema, social, ideator) receive
+# `_run` as a callable and cannot pass extra context through it.
+_RECORDER: tm.RunRecorder = tm.NullRecorder()
+
+
+def set_recorder(recorder: tm.RunRecorder) -> None:
+    global _RECORDER
+    _RECORDER = recorder
+
+
+def get_recorder() -> tm.RunRecorder:
+    return _RECORDER
+
+
+def start_run(topic_slug: str, topic_id: str | None = None, trigger: str = "manual") -> tm.RunRecorder:
+    """Open a recorded run and make it the active one for this process."""
+    recorder = make_recorder(_db(), topic_slug, topic_id, trigger)
+    set_recorder(recorder)
+    return recorder
+
+
+@contextmanager
+def recorded_run(topic_slug: str, topic_id: str | None = None, trigger: str = "manual"):
+    """Wrap a unit of pipeline work so it lands in `agent_runs` either way.
+
+    The run is closed on the way out whatever happens, so a crashed pipeline
+    still leaves a costed, inspectable record instead of a row stuck at
+    `running` forever.
+    """
+    recorder = start_run(topic_slug, topic_id, trigger)
+    try:
+        yield recorder
+    except tm.SpendCeilingExceeded as exc:
+        print(f"[swarm] SPEND CEILING: {exc}", flush=True)
+        recorder.finish(tm.RUN_STATUS_FAILED, error=str(exc))
+        raise
+    except Exception as exc:
+        recorder.finish(tm.RUN_STATUS_FAILED, error=str(exc))
+        raise
+    else:
+        recorder.finish(tm.RUN_STATUS_SUCCEEDED)
+    finally:
+        summary = recorder.summary()
+        if summary.get("events"):
+            print(
+                f"[swarm] run {summary['run_id'][:8]} · {summary['agents']} agents · "
+                f"{summary['input_tokens']}in/{summary['output_tokens']}out tokens · "
+                f"${summary['cost_usd']:.4f} · {summary['duration_ms'] / 1000:.1f}s",
+                flush=True,
+            )
+        set_recorder(tm.NullRecorder())
+
+
 # ── ADK runner ───────────────────────────────────────────────────────────────
-async def _run_agent(agent: LlmAgent, prompt: str, session_id: str, retries: int = 3) -> str:
+async def _run_agent(
+    agent: LlmAgent, prompt: str, session_id: str, retries: int = 3
+) -> tuple[str, int, int]:
+    """Run one agent to completion. Returns (text, input_tokens, output_tokens).
+
+    Tokens accumulate across retries, not just the successful attempt — a call
+    that streamed halfway and then hit a 503 still cost money, and the spend
+    ceiling is only honest if it counts that.
+    """
     last_err: Exception | None = None
+    in_tokens = 0
+    out_tokens = 0
     for attempt in range(retries):
         try:
             svc = InMemorySessionService()
@@ -134,11 +205,14 @@ async def _run_agent(agent: LlmAgent, prompt: str, session_id: str, retries: int
             content = genai_types.Content(role="user", parts=[genai_types.Part(text=prompt)])
             parts: list[str] = []
             async for event in runner.run_async(user_id="dhyan", session_id=session.id, new_message=content):
+                ev_in, ev_out = tm.extract_usage(event)
+                in_tokens += ev_in
+                out_tokens += ev_out
                 if hasattr(event, "content") and event.content:
                     for p in event.content.parts:
                         if hasattr(p, "text") and p.text:
                             parts.append(p.text)
-            return "".join(parts).strip()
+            return "".join(parts).strip(), in_tokens, out_tokens
         except Exception as exc:
             last_err = exc
             msg = str(exc).lower()
@@ -170,13 +244,47 @@ async def _run_agent(agent: LlmAgent, prompt: str, session_id: str, retries: int
 
 
 def _run(agent: LlmAgent, prompt: str, session_id: str) -> str:
+    """Run one agent, recorded and spend-bounded.
+
+    Every one of the ten LLM agents reaches the model through here — including
+    the ones invoked by the sub-runners, which are handed this function as
+    `_run_agent_fn`. That makes it the single place to meter cost and emit the
+    per-agent events the swarm view renders.
+    """
+    recorder = get_recorder()
+    # Checked *before* the call: the ceiling should bound what can still be
+    # spent, not report what already was.
+    recorder.check_ceiling()
+
+    from swarm.llm import active_model_name
+    model = active_model_name()
+    recorder.emit(agent.name, tm.KIND_AGENT_STARTED, detail={"model": model})
+    started = time.monotonic()
+
     # Reclaim the per-stage ADK runner/session and large tool payloads before the
     # next stage so peak RSS stays bounded on memory-constrained hosts (Render 512MB).
     try:
-        return asyncio.run(_run_agent(agent, prompt, session_id))
+        text, in_tokens, out_tokens = asyncio.run(_run_agent(agent, prompt, session_id))
+    except Exception as exc:
+        recorder.emit(
+            agent.name, tm.KIND_AGENT_FAILED,
+            detail={"error": str(exc)[:1000], "model": model},
+            duration_ms=int((time.monotonic() - started) * 1000),
+        )
+        raise
     finally:
         import gc
         gc.collect()
+
+    recorder.emit(
+        agent.name, tm.KIND_AGENT_FINISHED,
+        detail={"model": model, "chars": len(text)},
+        input_tokens=in_tokens,
+        output_tokens=out_tokens,
+        cost_usd=tm.estimate_cost(model, in_tokens, out_tokens),
+        duration_ms=int((time.monotonic() - started) * 1000),
+    )
+    return text
 
 
 # ── Draft length gate ────────────────────────────────────────────────────────
@@ -186,6 +294,14 @@ def _run(agent: LlmAgent, prompt: str, session_id: str) -> str:
 # this gate is not.
 MIN_BODY_WORDS = 1_100
 _LENGTH_RETRIES = 1
+
+# ── GEO template gate ────────────────────────────────────────────────────────
+# Same lesson, second application. The answer-engine template (question H2 +
+# self-contained answer, hard numbers, competitor table, "not a fit if…") is in
+# the writer prompt, but AI Visibility SCAN 001 measured 0/18 citations while a
+# prompt-only ban on puffery was already in place and being ignored. So the
+# template is verified in the pipeline. See swarm/geo.py.
+_GEO_RETRIES = 1
 
 
 def _body_word_count(mdx: str) -> int:
@@ -259,7 +375,16 @@ class BlogOrchestrator:
         except json.JSONDecodeError as exc:
             return {"topic": title, "_parse_error": f"JSON decode: {exc}", "raw": raw[:2000]}
 
-    def run_research(self, topic_id: str, slug: str, title: str, tags: list[str]) -> dict:
+    def run_research(self, topic_id: str, slug: str, title: str, tags: list[str],
+                     feedback: str = "") -> dict:
+        """Research the topic. `feedback` re-runs it against operator notes.
+
+        The feedback parameter used to be missing entirely: rejecting at the
+        research gate stored the note in `rejection_log` and then re-ran the
+        research agent with the identical prompt, so "reject → re-run with
+        feedback" silently did nothing at that gate — while working correctly at
+        the draft gate.
+        """
         print(f"\n[research] Starting multi-source research for: {title}", flush=True)
         _update_status(slug, "researching")
 
@@ -280,10 +405,13 @@ class BlogOrchestrator:
         if brief:
             roadmap_section += f"\nIntended angle (from the content roadmap): {brief}"
 
+        # Same containment as the writer path — this reaches an agent prompt.
+        fenced_feedback = guards.fence_untrusted("OPERATOR FEEDBACK", feedback)
         prompt = (
             f"Research this topic thoroughly using all available tools:\n\n"
             f"Topic: {title}\nTags: {', '.join(tags)}"
             f"{roadmap_section}"
+            f"{chr(10) + chr(10) + fenced_feedback if fenced_feedback else ''}"
         )
 
         parsed: dict = {}
@@ -373,15 +501,21 @@ class BlogOrchestrator:
         Failing loudly is deliberate — a short draft lands the topic in `failed`
         for human review instead of quietly publishing another thin post.
         """
+        recorder = get_recorder()
         for attempt in range(1, _LENGTH_RETRIES + 1):
             words = _body_word_count(draft)
             if words >= MIN_BODY_WORDS:
+                recorder.gate("length_gate", passed=True, attempt=attempt)
                 return draft
 
             print(
                 f"[writer] Draft is {words} words, below the {MIN_BODY_WORDS} floor. "
                 f"Expanding (attempt {attempt}/{_LENGTH_RETRIES})...",
                 flush=True,
+            )
+            recorder.gate(
+                "length_gate", passed=False,
+                reason=f"{words} words, floor is {MIN_BODY_WORDS}", attempt=attempt,
             )
             draft = _run(
                 self.writer_agent,
@@ -403,6 +537,62 @@ class BlogOrchestrator:
             )
         return draft
 
+    def _enforce_geo_template(self, draft: str, writer_prompt: str, topic_id: str) -> str:
+        """Verify the answer-engine template; re-run the writer with a repair brief if it fails.
+
+        Metadata (`author`, `dateModified`) is injected first so the audit sees the finished
+        frontmatter — those two requirements are mechanical and never bounce to the LLM.
+
+        Same contract as `_enforce_length`: one repair attempt, then fail into `failed` for
+        human review. A post without the template is invisible to answer engines, which is the
+        one thing this engine exists to fix — publishing it anyway would be the silent
+        degradation all over again.
+        """
+        recorder = get_recorder()
+        draft = geo.inject_metadata(draft)
+        for attempt in range(1, _GEO_RETRIES + 1):
+            report = geo.audit(draft)
+            if report.ok:
+                print(
+                    f"  [geo] Template OK — {report.question_answers} quotable Q&A block(s); "
+                    f"proof numbers: {', '.join(report.found_numbers)}.",
+                    flush=True,
+                )
+                recorder.gate("geo_gate", passed=True, attempt=attempt)
+                return draft
+
+            print(
+                f"[writer] GEO template gate rejected the draft "
+                f"({len(report.failures)} issue(s), attempt {attempt}/{_GEO_RETRIES}):",
+                flush=True,
+            )
+            for failure in report.failures:
+                print(f"         - {failure}", flush=True)
+            recorder.gate("geo_gate", passed=False, reason=" | ".join(report.failures), attempt=attempt)
+
+            draft = geo.inject_metadata(_run(
+                self.writer_agent,
+                f"{writer_prompt}\n\n{report.as_brief()}\n\nPREVIOUS DRAFT:\n{draft}",
+                f"writer-{topic_id}-geo-{attempt}",
+            ))
+
+        report = geo.audit(draft)
+        if not report.ok:
+            raise RuntimeError(
+                f"Draft still fails the GEO template after {_GEO_RETRIES} repair attempt(s): "
+                + " | ".join(report.failures)
+                + " — holding for human review rather than publishing a post no answer engine "
+                "will quote."
+            )
+        # A repair pass must not buy the template by cutting the post in half.
+        words = _body_word_count(draft)
+        if words < MIN_BODY_WORDS:
+            raise RuntimeError(
+                f"GEO repair pass cut the draft to {words} words (floor is {MIN_BODY_WORDS}). "
+                f"Holding for human review."
+            )
+        return draft
+
     def _run_writing_inner(self, topic_id: str, slug: str, title: str, feedback: str = "") -> dict:
         post = _get_post(topic_id)
         research_json = post.get("research_json", "{}")
@@ -410,7 +600,11 @@ class BlogOrchestrator:
         print(f"\n[writer] Writing blog post...", flush=True)
         _update_status(slug, "writing")
 
-        feedback_section = f"\n\nOPERATOR FEEDBACK TO INCORPORATE:\n{feedback}" if feedback else ""
+        # Fenced rather than interpolated raw: operator feedback is human input
+        # arriving over HTTP, and it is being handed to the agent that writes to
+        # the live site. See swarm/guards.py.
+        fenced = guards.fence_untrusted("OPERATOR FEEDBACK", feedback)
+        feedback_section = f"\n\n{fenced}" if fenced else ""
         writer_prompt = (
             f"Write a complete blog post based on this research digest:\n\n"
             f"{research_json}"
@@ -418,11 +612,16 @@ class BlogOrchestrator:
         )
         draft = _run(self.writer_agent, writer_prompt, f"writer-{topic_id}")
         draft = self._enforce_length(draft, writer_prompt, topic_id)
+        draft = self._enforce_geo_template(draft, writer_prompt, topic_id)
         print(f"[writer] Draft ready ({_body_word_count(draft)} words). Running humaniser...", flush=True)
 
         humaniser_prompt = (
             "Humanise this draft blog post — make it sound exactly like Dhyan Karthik wrote it.\n"
-            "Preserve its length: do not summarise, condense, or drop sections.\n\n"
+            "Preserve its length: do not summarise, condense, or drop sections.\n"
+            "Leave the frontmatter, every markdown table, and the first paragraph under each\n"
+            "question-form (?) heading structurally intact — those are answer-engine surfaces,\n"
+            "not prose to tighten. Rewrite their wording if you like; do not merge, reorder,\n"
+            "shorten below 40 words, or delete them.\n\n"
             f"{draft}"
         )
         humanised = _run(self.humaniser_agent, humaniser_prompt, f"humaniser-{topic_id}")
@@ -432,6 +631,16 @@ class BlogOrchestrator:
             print(
                 f"[writer] Humaniser cut {_body_word_count(draft)} → "
                 f"{_body_word_count(humanised)} words; keeping the writer's draft.",
+                flush=True,
+            )
+            humanised = draft
+
+        # Same guard for the GEO template: the humaniser rewrites freely and has no reason to
+        # respect a table or a 40-word answer block. If it broke one, the writer's draft wins.
+        humanised = geo.inject_metadata(humanised)
+        if not geo.audit(humanised).ok and geo.audit(draft).ok:
+            print(
+                "[writer] Humaniser broke the GEO template; keeping the writer's draft.",
                 flush=True,
             )
             humanised = draft
@@ -452,6 +661,18 @@ class BlogOrchestrator:
             _run_agent_fn=_run,
             session_id=topic_id,
         )
+        # Image generation happens inside the image tool, not through `_run`, so
+        # it would otherwise be the one module that spends money invisibly — and
+        # it is the most expensive module in the catalogue. Meter it here, from
+        # what actually came back.
+        image_count = len(images_meta) + (1 if hero_image_url else 0)
+        if image_count:
+            image_model = os.environ.get("OPENAI_IMAGE_MODEL", "dall-e-3")
+            get_recorder().emit(
+                "image_generator", tm.KIND_AGENT_FINISHED,
+                detail={"model": image_model, "images": image_count},
+                cost_usd=tm.estimate_image_cost(image_model, image_count),
+            )
         print(f"[writer] Images done ({len(images_meta)} generated). Running linker...", flush=True)
 
         linked_mdx = run_linking(
@@ -465,6 +686,9 @@ class BlogOrchestrator:
 
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         linked_mdx = re.sub(r'(?m)^date:.*$', f'date: "{today}"', linked_mdx, count=1)
+        # `^date:` cannot match `dateModified:`, so set that one explicitly and last — the
+        # imager and linker both rewrite the body after the gate ran.
+        linked_mdx = geo.inject_metadata(linked_mdx, date_modified=today)
 
         word_count = _body_word_count(linked_mdx)
 
@@ -500,6 +724,18 @@ class BlogOrchestrator:
                 )
         except Exception as exc:
             _record_step_failure(topic_id, "Schema", exc)
+
+        # Final assertion on exactly what will be published. The imager, linker and schema steps
+        # all rewrite the MDX after the gate ran, so re-verify rather than assume. Cheap, and it
+        # is the only check that sees the real artefact.
+        final_report = geo.audit(linked_mdx)
+        if not final_report.ok:
+            raise RuntimeError(
+                "Post-processing broke the GEO template: "
+                + " | ".join(final_report.failures)
+                + " — holding for human review. Suspect the imager, linker or schema step, "
+                "not the writer; the draft passed the gate before they ran."
+            )
 
         # Social kit (LinkedIn carousel + 5 post types + X threads). Best-effort — never blocks.
         social_kit: dict = {}
@@ -576,7 +812,12 @@ class BlogOrchestrator:
 
     # ── Rejection handler ────────────────────────────────────────────────────
     def handle_rejection(self, topic_id: str, slug: str, current_status: str, feedback: str) -> None:
-        """Re-run the appropriate stage with operator feedback."""
+        """Re-run the appropriate stage with operator feedback.
+
+        Feedback is sanitised here rather than at the API boundary alone, so the
+        CLI path gets the same treatment as the dashboard path.
+        """
+        feedback = guards.sanitise_feedback(feedback)
         _db().table("blog_posts").select("rejection_log").eq("topic_id", topic_id).execute()
         post = _get_post(topic_id)
         log = post.get("rejection_log") or []
@@ -588,7 +829,7 @@ class BlogOrchestrator:
         tags = topic.get("tags", [])
 
         if current_status == "verifying_research":
-            self.run_research(topic_id, slug, title, tags)
+            self.run_research(topic_id, slug, title, tags, feedback=feedback)
         elif current_status in ("verifying_draft", "scheduled"):
             # Vetoing a 'scheduled' post pulls it off the auto-publish schedule and
             # re-drafts it with feedback; it lands back at verifying_draft (a manual

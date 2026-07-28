@@ -87,6 +87,11 @@ function computeStepStates(status: string, post: any): StepState[] {
   return states
 }
 
+// Statuses that can advance without any user action, so the page must keep polling:
+// the autopilot worker drives the pipeline states, and 'scheduled' flips to
+// 'published' on its own once the post's slot arrives.
+const LIVE_STATES = ['queued', 'researching', 'writing', 'publishing', 'scheduled']
+
 export default function TopicPage({ params }: { params: Promise<{ slug: string }> }) {
   const router = useRouter()
   const { slug } = use(params)
@@ -102,6 +107,7 @@ export default function TopicPage({ params }: { params: Promise<{ slug: string }
   const [videoKit, setVideoKit]         = useState<any>(null)
   const logCursorRef = useRef(0)
   const mountedRef = useRef(true)
+  const statusRef = useRef<string | null>(null)
 
   const load = useCallback(async () => {
     try {
@@ -123,15 +129,12 @@ export default function TopicPage({ params }: { params: Promise<{ slug: string }
     return () => { mountedRef.current = false }
   }, [])
 
+  useEffect(() => { statusRef.current = topic?.status ?? null }, [topic?.status])
+
   useEffect(() => {
     load()
     const iv = setInterval(() => {
-      setTopic((t: any) => {
-        if (!t) return t
-        const active = ['queued', 'researching', 'writing', 'publishing'].includes(t.status)
-        if (active) load()
-        return t
-      })
+      if (statusRef.current && LIVE_STATES.includes(statusRef.current)) load()
     }, 4000)
     return () => clearInterval(iv)
   }, [load])
@@ -164,16 +167,20 @@ export default function TopicPage({ params }: { params: Promise<{ slug: string }
   const isScheduled = topic.status === 'scheduled'
   const isFailed    = topic.status === 'failed'
   const isPublished = topic.status === 'published'
-  const isRunning   = ['queued', 'researching', 'writing', 'publishing'].includes(topic.status)
+  // 'queued' means "waiting its turn", not "a worker has claimed it". Under autopilot a
+  // topic legitimately sits queued for days until a tick reaches it, so it is kept out
+  // of isWorking below — otherwise every backlog topic reads as a crash after 5 minutes.
+  const isWorking   = ['researching', 'writing', 'publishing'].includes(topic.status)
+  const isRunning   = isWorking || topic.status === 'queued'
 
-  // Stuck detection — running but updated_at hasn't moved in >5 min
+  // Stuck detection — a worker claimed the topic but updated_at hasn't moved in >5 min.
   const STUCK_THRESHOLD_MS = 5 * 60 * 1000
   const updatedMs = topic.updated_at ? new Date(topic.updated_at).getTime() : 0
   const ageMs = updatedMs ? Date.now() - updatedMs : 0
-  const isStuck = isRunning && ageMs > STUCK_THRESHOLD_MS
+  const isStuck = isWorking && ageMs > STUCK_THRESHOLD_MS
 
   const statusHelp: Record<string, string> = {
-    queued: 'The job has been accepted and should begin shortly.',
+    queued: 'Waiting its turn in the autopilot queue. Each tick picks up one topic at a time, so a backlog drains gradually.',
     researching: 'The agent is gathering site context and external sources.',
     writing: 'The writer, humaniser, image pipeline, and linker are running.',
     publishing: 'The approved post is being pushed live.',
@@ -462,10 +469,12 @@ export default function TopicPage({ params }: { params: Promise<{ slug: string }
 
           {isRunning && !isStuck && (
             <div className="card" style={{ marginBottom: 20, borderColor: 'rgba(245,158,11,0.22)', background: 'rgba(245,158,11,0.05)' }}>
-              <div style={{ fontWeight: 700, marginBottom: 6 }}>Pipeline running in background</div>
+              <div style={{ fontWeight: 700, marginBottom: 6 }}>
+                {isWorking ? 'Pipeline running in background' : 'Queued for autopilot'}
+              </div>
               <div style={{ color: 'var(--text-muted)', fontSize: 14, lineHeight: 1.6 }}>
                 {statusHelp[topic.status] || 'The agent is working.'} This page refreshes automatically every few seconds.
-                Live job output is shown below.
+                {isWorking && ' Live job output is shown below.'}
               </div>
             </div>
           )}

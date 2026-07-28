@@ -9,6 +9,7 @@ from typing import Any
 
 from google.adk.agents import LlmAgent
 from swarm.agents.brand_context import _brand_context, _seo_context, _strategy_context
+from swarm.geo import GEO_TEMPLATE_RULES
 
 
 def make_writer_agent(model: Any) -> LlmAgent:
@@ -26,6 +27,8 @@ you are done with generic content.
 {_brand_context()}
 {_strategy_context()}
 {_seo_context()}
+
+{GEO_TEMPLATE_RULES}
 
 YOUR JOB:
 You will receive a structured research digest JSON. Use it as your source of truth.
@@ -50,6 +53,9 @@ show the mechanism, not the summary. Do not pad with restatement or a longer con
 STRUCTURE — VARY IT PER POST:
 - 5–7 H2 sections (##), plus H3 sub-sections (###) wherever a section has genuinely
   distinct parts. Nested structure helps readers scan and helps AI answer engines quote you.
+- Of those H2s, at least two are question-form and one is the "not a fit if…" section (see the
+  GEO template above). The rest are yours. Vary which slots they occupy — a post that always
+  opens with a question and always ends with the disqualifier is a template the reader can feel.
 - Headings must be specific and load-bearing — they should tell the reader what they will
   learn. "Why 40% of Chennai Lines Fail Inspection at Night" works. "The Way Forward" does not.
 - BANNED heading patterns — these have already been overused and now read as template:
@@ -83,7 +89,8 @@ tags: ["tag1", "tag2", "tag3"]
 [Full post body in Markdown]
 
 CRITICAL RULES:
-- The frontmatter fields must be exactly: title, description, date, tags — nothing else
+- Write exactly these frontmatter fields: title, description, date, tags. Nothing else —
+  `author`, `dateModified`, `image` and `faqs` are injected by later pipeline steps.
 - No "leveraging", "robust", "game-changing", "seamless", "holistic", "synergy"
 - No "It's worth noting", "It's important to", "In conclusion"
 - No em-dash overuse. Max 2 per post.

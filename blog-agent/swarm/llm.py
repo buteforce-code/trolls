@@ -79,6 +79,17 @@ def make_text_model() -> Any:
     )
 
 
+def active_model_name() -> str:
+    """Bare model name for the active provider, e.g. 'gpt-4o'.
+
+    Used by telemetry to price a call. Unlike ``model_label()`` this carries no
+    decoration, so it can be looked up directly in the cost table.
+    """
+    if _provider() == "gemini":
+        return os.environ.get("ADK_GEMINI_MODEL", DEFAULT_GEMINI_MODEL)
+    return os.environ.get("OPENAI_MODEL", DEFAULT_OPENAI_MODEL)
+
+
 def model_label() -> str:
     """Human-readable description of the active model, for logs."""
     provider = _provider()

@@ -1,0 +1,413 @@
+"""GEO template gate tests.
+
+The gate exists because AI Visibility SCAN 001 measured 0/18 citations while the writer prompt
+already banned puffery and asked for structure. So the tests that matter are the adversarial
+ones: a draft that *looks* compliant must still fail when the structure is decorative.
+
+`swarm/geo.py` is import-clean (no supabase, no ADK, no dotenv), so these import it directly.
+"""
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from swarm import geo  # noqa: E402
+
+
+def _fail(msg: str) -> None:
+    print(f"  FAIL: {msg}")
+
+
+def _words(n: int) -> str:
+    return " ".join(["inspection"] * n)
+
+
+FRONTMATTER = (
+    '---\ntitle: "A Post"\ndescription: "Meta."\ndate: "2026-07-26"\ntags: ["cv"]\n---\n\n'
+)
+
+TABLE = """
+| Option | Accuracy | Where it wins |
+|---|---|---|
+| Cognex In-Sight | High | Off-the-shelf reliability, global support |
+| Keyence | High | Fastest sensor-level setup |
+| Buteforce custom YOLOv8 | 99.2% | Defects no catalogue model was trained on |
+"""
+
+NOT_A_FIT = f"## Not a fit if you run one line under 20 packs a minute\n\n{_words(60)}\n"
+
+
+def _compliant_body() -> str:
+    return (
+        f"# A Post\n\n{_words(80)}\n\n"
+        f"## What does computer vision inspection actually cost on an Indian FMCG line?\n\n"
+        f"{_words(70)}\n\nElaboration paragraph. {_words(120)}\n\n"
+        f"## How fast can a vision system run before accuracy drops?\n\n"
+        f"{_words(90)}\n\nMore detail here. {_words(150)}\n\n"
+        f"## The throughput reality\n\nWe hold 99.2% at 120 items/min. {_words(200)}\n\n"
+        f"{TABLE}\n\n{NOT_A_FIT}\n"
+    )
+
+
+def _compliant() -> str:
+    return geo.inject_metadata(FRONTMATTER + _compliant_body())
+
+
+# ── Baseline ──────────────────────────────────────────────────────────────────────────────
+def test_compliant_post_passes() -> int:
+    report = geo.audit(_compliant())
+    if not report.ok:
+        _fail(f"a compliant post was rejected: {report.failures}")
+        return 1
+    if report.question_answers < geo.MIN_QUESTION_H2:
+        _fail(f"counted only {report.question_answers} compliant Q&A blocks")
+        return 1
+    return 0
+
+
+# ── Requirement 1: question H2 + self-contained answer ────────────────────────────────────
+def test_statement_headings_fail() -> int:
+    mdx = _compliant().replace(
+        "## What does computer vision inspection actually cost on an Indian FMCG line?",
+        "## The cost of computer vision inspection",
+    ).replace(
+        "## How fast can a vision system run before accuracy drops?",
+        "## Throughput and accuracy",
+    )
+    if geo.audit(mdx).ok:
+        _fail("a post with no question-form H2 passed")
+        return 1
+    return 0
+
+
+def test_decorative_question_heading_fails() -> int:
+    """A question H2 with a one-line stub under it is the obvious way to game this."""
+    stub = (
+        f"# A Post\n\n{_words(80)}\n\n"
+        f"## What does it cost?\n\nIt depends on the line.\n\n"
+        f"## How fast is it?\n\nVery fast.\n\n"
+        f"## Detail\n\n99.2% at 120 items/min. {_words(400)}\n\n{TABLE}\n\n{NOT_A_FIT}\n"
+    )
+    report = geo.audit(geo.inject_metadata(FRONTMATTER + stub))
+    if report.ok:
+        _fail("question headings with stub answers passed the gate")
+        return 1
+    if report.question_answers != 0:
+        _fail(f"stub answers were counted as compliant ({report.question_answers})")
+        return 1
+    return 0
+
+
+def test_answer_must_be_prose_not_a_list() -> int:
+    """Answer engines quote sentences; a bullet list directly under the heading is not an answer."""
+    listy = _compliant().replace(
+        f"## How fast can a vision system run before accuracy drops?\n\n{_words(90)}",
+        "## How fast can a vision system run before accuracy drops?\n\n"
+        + "\n".join(f"- point {i} {_words(12)}" for i in range(6)),
+    )
+    if geo.audit(listy).ok:
+        _fail("a bullet list directly under a question H2 was accepted as the answer")
+        return 1
+    return 0
+
+
+def test_overlong_answer_fails() -> int:
+    """Past ~160 words it stops being a quotable snippet."""
+    bloated = _compliant().replace(
+        f"## How fast can a vision system run before accuracy drops?\n\n{_words(90)}",
+        f"## How fast can a vision system run before accuracy drops?\n\n{_words(400)}",
+    )
+    if geo.audit(bloated).ok:
+        _fail("a 400-word answer block passed the 40-160 word window")
+        return 1
+    return 0
+
+
+def test_h3_question_does_not_count() -> int:
+    """The requirement is H2 — that is the level answer engines lift as a heading."""
+    demoted = _compliant().replace("## What does computer vision", "### What does computer vision")
+    if geo.audit(demoted).ok:
+        _fail("an H3 question was counted toward the H2 requirement")
+        return 1
+    return 0
+
+
+# ── Requirement 2: hard numbers, never adjectives ─────────────────────────────────────────
+def test_missing_proof_numbers_fails() -> int:
+    numberless = _compliant().replace("99.2% at 120 items/min", "extremely accurate at high speed")
+    report = geo.audit(numberless)
+    if report.ok:
+        _fail("a post with no hard proof numbers passed")
+        return 1
+    return 0
+
+
+def test_throughput_number_variants_are_recognised() -> int:
+    failures = 0
+    pattern = geo.PROOF_NUMBERS["120 items/min throughput"]
+    for variant in ["120 items/min", "120 items per minute", "120 packs/min",
+                    "120 CPM", "120/min", "120 units a minute"]:
+        if not pattern.search(variant):
+            _fail(f"throughput variant not recognised: {variant!r}")
+            failures += 1
+    if pattern.search("120 defects found"):
+        _fail("throughput pattern matched an unrelated '120'")
+        failures += 1
+    return failures
+
+
+def test_rounded_number_does_not_satisfy_the_gate() -> int:
+    """'over 99%' is the tell that the writer paraphrased instead of quoting the real figure."""
+    rounded = _compliant().replace(
+        "We hold 99.2% at 120 items/min.", "We hold over 99% accuracy at high line speed.",
+    )
+    if geo.audit(rounded).ok:
+        _fail("'over 99%' was accepted in place of 99.2% / 120 items/min")
+        return 1
+    return 0
+
+
+def test_banned_adjectives_fail() -> int:
+    failures = 0
+    for adjective in ["world-class", "cutting-edge", "revolutionary", "game-changing",
+                      "state-of-the-art", "transformative"]:
+        mdx = _compliant().replace("## The throughput reality",
+                                   f"## The {adjective} throughput reality")
+        report = geo.audit(mdx)
+        if report.ok:
+            _fail(f"banned adjective passed the gate: {adjective}")
+            failures += 1
+    return failures
+
+
+def test_live_fmcg_post_fails_the_gate() -> int:
+    """Regression anchor: the real page that earns ~60% of visibility must not pass as-is.
+
+    Its actual copy — 'Revolutionizing', 'game-changer', 'seismic shift', no comparison table,
+    no disqualifier, no question headings — is what the gate was built to stop.
+    """
+    live = (
+        '---\ntitle: "AI-Driven Quality Control: Revolutionizing FMCG Manufacturing in India"\n'
+        'description: "Explore how computer vision is transforming quality control."\n'
+        'date: "2026-07-04"\ntags: ["Computer Vision"]\n---\n\n'
+        "# AI-Driven Quality Control: Revolutionizing FMCG Manufacturing in India\n\n"
+        f"{_words(200)}\n\n## The Current Landscape of FMCG in India\n\n{_words(200)}\n\n"
+        f"## Conclusion: Embracing a Smart Future\n\nThis is a game-changer and a seismic "
+        f"shift. {_words(200)}\n"
+    )
+    if geo.audit(live).ok:
+        _fail("the live FMCG post passed the gate — the gate is not enforcing anything")
+        return 1
+    return 0
+
+
+# ── Requirement 3: competitor-inclusive comparison table ──────────────────────────────────
+def test_missing_table_fails() -> int:
+    if geo.audit(_compliant().replace(TABLE, "")).ok:
+        _fail("a post with no comparison table passed")
+        return 1
+    return 0
+
+
+def test_table_without_named_competitors_fails() -> int:
+    """'Us vs. a generic alternative' is a brochure, not a comparison."""
+    vague = _compliant().replace(TABLE, """
+| Option | Accuracy | Where it wins |
+|---|---|---|
+| Off-the-shelf tools | Medium | Cheap to start |
+| In-house build | Varies | Full control |
+| Buteforce | 99.2% | Custom defects |
+""")
+    if geo.audit(vague).ok:
+        _fail("a table naming zero real competitors passed")
+        return 1
+    return 0
+
+
+def test_two_row_table_fails() -> int:
+    thin = _compliant().replace(TABLE, """
+| Option | Where it wins |
+|---|---|
+| Cognex | Off-the-shelf reliability |
+| Keyence | Sensor-level setup |
+""")
+    if geo.audit(thin).ok:
+        _fail(f"a {geo.MIN_TABLE_BODY_ROWS - 1}-row table passed the row minimum")
+        return 1
+    return 0
+
+
+def test_competitor_named_outside_a_table_does_not_count() -> int:
+    """Prose name-drops are not a comparison; the table is the citable artefact."""
+    prose_only = _compliant().replace(TABLE, "").replace(
+        "## The throughput reality",
+        "## Cognex and Keyence both sell this, but\n\nWe hold 99.2% at 120 items/min. "
+        f"{_words(100)}\n\n## The throughput reality",
+    )
+    if geo.audit(prose_only).ok:
+        _fail("competitors named only in prose satisfied the table requirement")
+        return 1
+    return 0
+
+
+def test_multiple_tables_one_compliant_passes() -> int:
+    """A spec table plus a real comparison table must not be penalised."""
+    extra = "\n| Camera | Lens |\n|---|---|\n| Basler | 16mm |\n\n"
+    if not geo.audit(_compliant().replace(TABLE, extra + TABLE)).ok:
+        _fail("a post with an extra non-comparison table was rejected")
+        return 1
+    return 0
+
+
+# ── Requirement 4: explicit disqualification ──────────────────────────────────────────────
+def test_missing_not_a_fit_fails() -> int:
+    if geo.audit(_compliant().replace(NOT_A_FIT, "")).ok:
+        _fail("a post with no 'not a fit if' section passed")
+        return 1
+    return 0
+
+
+def test_token_not_a_fit_section_fails() -> int:
+    token = _compliant().replace(NOT_A_FIT, "## Not a fit if you are small\n\nCall us anyway.\n")
+    if geo.audit(token).ok:
+        _fail("a one-line disqualifier passed")
+        return 1
+    return 0
+
+
+def test_not_a_fit_phrasings_are_recognised() -> int:
+    failures = 0
+    for heading in ["Not a fit if you run a single line",
+                    "When not to buy a vision system",
+                    "Who shouldn't call us",
+                    "When this doesn't work",
+                    "Where this breaks down"]:
+        mdx = _compliant().replace(
+            "## Not a fit if you run one line under 20 packs a minute", f"## {heading}",
+        )
+        if not geo.audit(mdx).ok:
+            _fail(f"valid disqualifier phrasing rejected: {heading!r}")
+            failures += 1
+    return failures
+
+
+# ── Requirements 5 + 6: injected metadata ─────────────────────────────────────────────────
+def test_metadata_injection() -> int:
+    failures = 0
+    out = geo.inject_metadata(FRONTMATTER + "# X\n\nbody", date_modified="2026-07-26")
+    if 'dateModified: "2026-07-26"' not in out:
+        _fail("dateModified was not injected")
+        failures += 1
+    if f'author: "{geo.AUTHOR_NAME}"' not in out:
+        _fail("author was not injected")
+        failures += 1
+    if "# X\n\nbody" not in out:
+        _fail("injection corrupted the body")
+        failures += 1
+    return failures
+
+
+def test_injection_is_idempotent_and_refreshes_the_date() -> int:
+    failures = 0
+    once = geo.inject_metadata(FRONTMATTER + "# X\n\nbody", date_modified="2026-07-01")
+    twice = geo.inject_metadata(once, date_modified="2026-07-26")
+    if twice.count("dateModified:") != 1 or twice.count("author:") != 1:
+        _fail("re-injection duplicated frontmatter keys")
+        failures += 1
+    if 'dateModified: "2026-07-26"' not in twice:
+        _fail("dateModified was not refreshed on re-injection")
+        failures += 1
+    if '2026-07-01' in twice:
+        _fail("stale dateModified survived")
+        failures += 1
+    return failures
+
+
+def test_injection_preserves_an_existing_author() -> int:
+    guest = '---\ntitle: "X"\nauthor: "Guest Writer"\n---\n\nbody'
+    if 'author: "Guest Writer"' not in geo.inject_metadata(guest):
+        _fail("an upstream author byline was overwritten")
+        return 1
+    return 0
+
+
+def test_missing_metadata_is_reported() -> int:
+    """Audit catches a skipped injection rather than trusting the caller."""
+    report = geo.audit(FRONTMATTER + _compliant_body())
+    if not any("author" in f for f in report.failures):
+        _fail("missing author was not reported")
+        return 1
+    if not any("dateModified" in f for f in report.failures):
+        _fail("missing dateModified was not reported")
+        return 1
+    return 0
+
+
+# ── Parser robustness ─────────────────────────────────────────────────────────────────────
+def test_headings_inside_code_fences_are_ignored() -> int:
+    fenced = _compliant().replace(
+        "## The throughput reality",
+        "```python\n# not a heading\n## also not a heading?\n```\n\n## The throughput reality",
+    )
+    if not geo.audit(fenced).ok:
+        _fail("a fenced code block was parsed as headings")
+        return 1
+    return 0
+
+
+def test_repair_brief_names_every_failure() -> int:
+    bare = FRONTMATTER + f"# X\n\n## Overview\n\n{_words(1200)}\n"
+    report = geo.audit(bare)
+    brief = report.as_brief()
+    failures = 0
+    if len(report.failures) < 4:
+        _fail(f"expected 4+ failures on an empty-template post, got {len(report.failures)}")
+        failures += 1
+    for expected in ["question-form", "proof number", "comparison table", "not a fit"]:
+        if expected not in brief.lower():
+            _fail(f"repair brief never mentions {expected!r}")
+            failures += 1
+    return failures
+
+
+def main() -> int:
+    tests = [
+        ("compliant post passes", test_compliant_post_passes),
+        ("statement headings fail", test_statement_headings_fail),
+        ("decorative question heading fails", test_decorative_question_heading_fails),
+        ("answer must be prose, not a list", test_answer_must_be_prose_not_a_list),
+        ("overlong answer fails", test_overlong_answer_fails),
+        ("H3 question does not count", test_h3_question_does_not_count),
+        ("missing proof numbers fail", test_missing_proof_numbers_fails),
+        ("throughput variants recognised", test_throughput_number_variants_are_recognised),
+        ("rounded number does not satisfy gate", test_rounded_number_does_not_satisfy_the_gate),
+        ("banned adjectives fail", test_banned_adjectives_fail),
+        ("live FMCG post fails the gate", test_live_fmcg_post_fails_the_gate),
+        ("missing table fails", test_missing_table_fails),
+        ("table without named competitors fails", test_table_without_named_competitors_fails),
+        ("two-row table fails", test_two_row_table_fails),
+        ("competitor in prose does not count", test_competitor_named_outside_a_table_does_not_count),
+        ("extra non-comparison table tolerated", test_multiple_tables_one_compliant_passes),
+        ("missing 'not a fit' fails", test_missing_not_a_fit_fails),
+        ("token 'not a fit' fails", test_token_not_a_fit_section_fails),
+        ("'not a fit' phrasings recognised", test_not_a_fit_phrasings_are_recognised),
+        ("metadata injected", test_metadata_injection),
+        ("injection idempotent, date refreshed", test_injection_is_idempotent_and_refreshes_the_date),
+        ("existing author preserved", test_injection_preserves_an_existing_author),
+        ("missing metadata reported", test_missing_metadata_is_reported),
+        ("code fences ignored", test_headings_inside_code_fences_are_ignored),
+        ("repair brief names every failure", test_repair_brief_names_every_failure),
+    ]
+    total = 0
+    for name, fn in tests:
+        failures = fn()
+        total += failures
+        print(f"{'PASS' if failures == 0 else 'FAIL'}  {name}")
+    print(f"\n{'ALL TESTS PASSED' if total == 0 else f'{total} FAILURE(S)'}")
+    return 1 if total else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

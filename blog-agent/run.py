@@ -26,7 +26,8 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).resolve().parent / ".env")
 
 from supabase import create_client
-from swarm.orchestrator import BlogOrchestrator
+from swarm import guards
+from swarm.orchestrator import BlogOrchestrator, recorded_run
 from swarm.slugs import slugify
 
 
@@ -79,10 +80,22 @@ def main():
                         help="Force a specific stage to run (used with --topic on existing slug)")
 
     args = parser.parse_args()
+
+    # Validate any slug before it reaches a database filter or a log path. The
+    # dashboard passes these through from HTTP, so "it came from our own UI" is
+    # not a guarantee about their shape.
+    for value in (args.approve, args.reject, args.status, args.delete, args.reset):
+        if value and not guards.is_valid_slug(value):
+            print(f"Invalid slug: {value!r}")
+            sys.exit(2)
+
     orch = BlogOrchestrator()
     db = _db()
 
     # ── Autopilot (one autonomous tick) ───────────────────────────────────────
+    # Autopilot opens one recorded run *per topic* (see autopilot._produce_one),
+    # not one for the whole tick — a per-run spend ceiling applied to a whole
+    # catch-up batch would stall the backlog partway through.
     if args.autopilot:
         from swarm.autopilot import run_tick
         for line in run_tick(orch, db):
@@ -129,16 +142,17 @@ def main():
         title = topic["title"]
 
         stage = args.stage or "research"
-        if stage == "research":
-            orch.run_research(topic_id, slug, title, tags)
-            print(f"\n✓ Research complete. Open the dashboard to review.")
-            print(f"  slug: {slug}")
-        elif stage == "write":
-            orch.run_writing(topic_id, slug, title)
-            print(f"\n✓ Draft ready. Open the dashboard to review.")
-        elif stage == "publish":
-            orch.run_publish(topic_id, slug)
-            print(f"\n✓ Published.")
+        with recorded_run(slug, topic_id, trigger="cli"):
+            if stage == "research":
+                orch.run_research(topic_id, slug, title, tags)
+                print(f"\n✓ Research complete. Open the dashboard to review.")
+                print(f"  slug: {slug}")
+            elif stage == "write":
+                orch.run_writing(topic_id, slug, title)
+                print(f"\n✓ Draft ready. Open the dashboard to review.")
+            elif stage == "publish":
+                orch.run_publish(topic_id, slug)
+                print(f"\n✓ Published.")
         return
 
     # ── Approve ──────────────────────────────────────────────────────────────
@@ -152,24 +166,25 @@ def main():
         status = topic["status"]
         topic_id = topic["id"]
 
-        if status == "verifying_research":
-            print(f"[approve] Research approved. Starting draft...")
-            orch.run_writing(topic_id, slug, topic["title"])
-            print(f"✓ Draft ready. Open dashboard to review.")
-        elif status in ("verifying_draft", "scheduled"):
-            # 'scheduled' = autopilot has it queued for a future slot; approving
-            # means "publish now" instead of waiting out the veto window.
-            label = "Draft approved" if status == "verifying_draft" else "Publishing ahead of schedule"
-            print(f"[approve] {label}. Publishing...")
-            result = orch.run_publish(topic_id, slug)
-            if result.get("published") or result.get("dry_run"):
-                url = result.get("published_url", "(dry run)")
-                print(f"✓ Published: {url}")
+        with recorded_run(slug, topic_id, trigger="dashboard"):
+            if status == "verifying_research":
+                print(f"[approve] Research approved. Starting draft...")
+                orch.run_writing(topic_id, slug, topic["title"])
+                print(f"✓ Draft ready. Open dashboard to review.")
+            elif status in ("verifying_draft", "scheduled"):
+                # 'scheduled' = autopilot has it queued for a future slot; approving
+                # means "publish now" instead of waiting out the veto window.
+                label = "Draft approved" if status == "verifying_draft" else "Publishing ahead of schedule"
+                print(f"[approve] {label}. Publishing...")
+                result = orch.run_publish(topic_id, slug)
+                if result.get("published") or result.get("dry_run"):
+                    url = result.get("published_url", "(dry run)")
+                    print(f"✓ Published: {url}")
+                else:
+                    print(f"✗ Publish failed: {result.get('error')}")
+                    sys.exit(1)
             else:
-                print(f"✗ Publish failed: {result.get('error')}")
-                sys.exit(1)
-        else:
-            print(f"Nothing to approve at status '{status}'.")
+                print(f"Nothing to approve at status '{status}'.")
         return
 
     # ── Reject ───────────────────────────────────────────────────────────────

@@ -20,8 +20,16 @@ import re
 from datetime import datetime, timezone
 from typing import Any, Callable
 
+from swarm.geo import AUTHOR_NAME
+
 SITE = "https://www.buteforce.com"
-AUTHOR = "Dhyan Karthik"
+# One spelling of the founder, everywhere. This said "Dhyan Karthik" while the live site's
+# rendered byline and Article JSON-LD said "Dhyaneshwaran" — two people, as far as a knowledge
+# graph is concerned. AI Visibility SCAN 001 found an entity gap was the root cause of 0/18
+# citations, so a split author name is not cosmetic.
+AUTHOR = AUTHOR_NAME
+AUTHOR_ID = "https://buteforce.com/#founder"
+AUTHOR_URL = "https://www.linkedin.com/in/dhyankarthik/"
 ORG = "Buteforce"
 
 
@@ -119,7 +127,7 @@ Output ONLY a raw JSON array. No markdown fences, no commentary. Exactly this sh
 
 
 def _article_node(
-    *, slug: str, title: str, description: str, date: str,
+    *, slug: str, title: str, description: str, date: str, date_modified: str,
     tags: list[str], hero_image_url: str,
 ) -> dict:
     node: dict[str, Any] = {
@@ -127,8 +135,15 @@ def _article_node(
         "headline": title[:110],
         "description": description,
         "datePublished": date,
-        "dateModified": date,
-        "author": {"@type": "Person", "name": AUTHOR, "url": SITE},
+        "dateModified": date_modified or date,
+        "author": {
+            "@type": "Person",
+            "@id": AUTHOR_ID,
+            "name": AUTHOR,
+            "jobTitle": "Founder & AI Architect",
+            "url": AUTHOR_URL,
+            "worksFor": {"@type": "Organization", "name": ORG, "url": SITE},
+        },
         "publisher": {
             "@type": "Organization",
             "name": ORG,
@@ -165,11 +180,12 @@ def run_schema_ld(
     title = meta_title or fm.get("title") or slug.replace("-", " ").title()
     description = meta_description or fm.get("description") or ""
     date = fm.get("date") or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    date_modified = fm.get("dateModified") or date
     tags = fm.get("tags") if isinstance(fm.get("tags"), list) else []
 
     graph: list[dict] = [_article_node(
         slug=slug, title=title, description=description,
-        date=date, tags=tags, hero_image_url=hero_image_url,
+        date=date, date_modified=date_modified, tags=tags, hero_image_url=hero_image_url,
     )]
 
     # Body without frontmatter for FAQ extraction.

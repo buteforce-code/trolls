@@ -83,27 +83,83 @@ STATEMENTS = [
     # View data is internal-only: RLS on, no anon policy — the service key (used by
     # /api/track and /api/stats) bypasses RLS; anon clients cannot read raw events.
     "ALTER TABLE blog_views ENABLE ROW LEVEL SECURITY",
-    # RLS — service key bypasses, anon key reads
+
+    # ── Privacy (DPDP Act / GDPR) ────────────────────────────────────────────
+    # `session_id` and `ua` are personal data. The raw session id is no longer
+    # stored: /api/track now writes a salted SHA-256 digest, which still supports
+    # unique-visitor counting but is not reversible to a device identifier.
+    # `ua` is reduced to a coarse client family before it is written.
+    #
+    # `expires_at` gives every row a hard, queryable retention deadline so
+    # "we keep view data for N days" is enforced by the database rather than by
+    # a promise in a policy document. purge_expired_views() below does the work.
+    "ALTER TABLE blog_views ADD COLUMN IF NOT EXISTS expires_at timestamptz",
+    "CREATE INDEX IF NOT EXISTS blog_views_expires_idx ON blog_views (expires_at)",
+    """
+    CREATE OR REPLACE FUNCTION purge_expired_views() RETURNS integer AS $$
+    DECLARE removed integer;
+    BEGIN
+        DELETE FROM blog_views WHERE expires_at IS NOT NULL AND expires_at <= now();
+        GET DIAGNOSTICS removed = ROW_COUNT;
+        RETURN removed;
+    END $$ LANGUAGE plpgsql
+    """,
+
+    # ── Agent telemetry ──────────────────────────────────────────────────────
+    # One row per pipeline run. Makes cost measurable (content_engine_features
+    # §14 flags every current cost figure as estimated, never instrumented) and
+    # makes the swarm watchable.
+    """
+    CREATE TABLE IF NOT EXISTS agent_runs (
+        id                  uuid PRIMARY KEY,
+        topic_slug          text,
+        topic_id            uuid,
+        trigger             text,
+        status              text NOT NULL DEFAULT 'running',
+        started_at          timestamptz DEFAULT now(),
+        finished_at         timestamptz,
+        duration_ms         bigint,
+        total_input_tokens  bigint DEFAULT 0,
+        total_output_tokens bigint DEFAULT 0,
+        total_cost_usd      numeric(12,6) DEFAULT 0,
+        agent_count         int DEFAULT 0,
+        error               text
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS agent_runs_started_idx ON agent_runs (started_at DESC)",
+    "CREATE INDEX IF NOT EXISTS agent_runs_slug_idx ON agent_runs (topic_slug)",
+    # One row per thing an agent or gate did, ordered by seq within a run.
+    """
+    CREATE TABLE IF NOT EXISTS agent_events (
+        id            bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        run_id        uuid REFERENCES agent_runs(id) ON DELETE CASCADE,
+        seq           int NOT NULL,
+        agent         text,
+        kind          text NOT NULL,
+        detail        jsonb DEFAULT '{}',
+        input_tokens  int DEFAULT 0,
+        output_tokens int DEFAULT 0,
+        cost_usd      numeric(12,6) DEFAULT 0,
+        duration_ms   bigint DEFAULT 0,
+        at            timestamptz DEFAULT now()
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS agent_events_run_seq_idx ON agent_events (run_id, seq)",
+    "ALTER TABLE agent_runs ENABLE ROW LEVEL SECURITY",
+    "ALTER TABLE agent_events ENABLE ROW LEVEL SECURITY",
+
+    # ── RLS lockdown ─────────────────────────────────────────────────────────
+    # These tables previously carried `FOR SELECT USING (true)` policies, which
+    # let anyone holding the anon key (a key that is public by design) read every
+    # row — including unpublished drafts, research digests and audit verdicts.
+    # Tolerable for one self-owned blog; a cross-tenant data leak the moment a
+    # second client exists. The dashboard reads through server-side API routes
+    # using the service key, which bypasses RLS, so nothing legitimate needs the
+    # anon path. Dropping the policies leaves RLS enabled with no policy = deny.
     "ALTER TABLE topics ENABLE ROW LEVEL SECURITY",
     "ALTER TABLE blog_posts ENABLE ROW LEVEL SECURITY",
-    """
-    DO $$ BEGIN
-        IF NOT EXISTS (
-            SELECT 1 FROM pg_policies WHERE tablename='topics' AND policyname='anon_read_topics'
-        ) THEN
-            CREATE POLICY anon_read_topics ON topics FOR SELECT USING (true);
-        END IF;
-    END $$
-    """,
-    """
-    DO $$ BEGIN
-        IF NOT EXISTS (
-            SELECT 1 FROM pg_policies WHERE tablename='blog_posts' AND policyname='anon_read_blog_posts'
-        ) THEN
-            CREATE POLICY anon_read_blog_posts ON blog_posts FOR SELECT USING (true);
-        END IF;
-    END $$
-    """,
+    "DROP POLICY IF EXISTS anon_read_topics ON topics",
+    "DROP POLICY IF EXISTS anon_read_blog_posts ON blog_posts",
 ]
 
 

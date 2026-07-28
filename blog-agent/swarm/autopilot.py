@@ -27,6 +27,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from swarm.slugs import slugify
+from swarm.telemetry import SpendCeilingExceeded
 
 # A topic in one of these states means a tick is (or was) actively working it.
 ACTIVE_STATES = ("researching", "writing", "publishing")
@@ -172,10 +173,25 @@ def _produce_one(db: Any, orch: Any, topic: dict, slot: datetime, log: list[str]
     """Research → write the topic (auto-advancing both gates), then schedule it.
     Returns True only if it reached 'scheduled'. Any stage failure leaves the topic
     in 'failed' (the orchestrator handles that) and returns False so the caller moves on.
+
+    Each topic is its own recorded run. That matters for more than tidy telemetry:
+    MAX_RUN_COST_USD is a *per-run* ceiling, so a single recorder spanning a whole
+    catch-up batch would have applied a one-post budget to the entire backlog and
+    silently stalled it partway through.
     """
+    from swarm.orchestrator import recorded_run
+
     tid, slug, title = topic["id"], topic["slug"], topic["title"]
     tags = topic.get("tags") or []
     log.append(f"produce: {slug}")
+
+    with recorded_run(slug, tid, trigger="autopilot"):
+        return _produce_one_inner(db, orch, topic, slot, log)
+
+
+def _produce_one_inner(db: Any, orch: Any, topic: dict, slot: datetime, log: list[str]) -> bool:
+    tid, slug, title = topic["id"], topic["slug"], topic["title"]
+    tags = topic.get("tags") or []
 
     orch.run_research(tid, slug, title, tags)
     if _status(db, slug) != "verifying_research":
@@ -344,6 +360,13 @@ def produce_all_queued(orch: Any, db: Any) -> list[str]:
         try:
             if _produce_one(db, orch, topic, slot, log):
                 scheduled += 1
+        except SpendCeilingExceeded as exc:
+            # A ceiling is a stop, not a per-topic failure. Swallowing it here
+            # would turn every remaining topic into a silent no-op that still
+            # looked like it had been attempted.
+            log.append(f"  SPEND CEILING hit at {topic.get('slug')}: {exc}")
+            log.append("  stopping the batch — raise the ceiling or run again later")
+            break
         except Exception as exc:  # orchestrator marks the topic failed; move on
             log.append(f"  produce crashed for {topic.get('slug')}: {exc}")
         finally:

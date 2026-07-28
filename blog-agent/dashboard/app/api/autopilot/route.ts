@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server'
-import { supabase } from '../../../lib/supabase'
+// Service key, not anon: RLS on `topics` now has no policies, so an anon read
+// returns zero rows rather than an error — a silent empty dashboard.
+import { supabaseAdmin as supabase } from '../../../lib/supabase'
 
 export const dynamic = 'force-dynamic'
 
