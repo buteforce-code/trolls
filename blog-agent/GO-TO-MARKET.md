@@ -23,20 +23,26 @@ public against a pipeline with `PUBLISH_DRY_RUN=false`.
 | ✅ | Per-agent telemetry and a live swarm view | `swarm/telemetry.py`, `app/swarm/` |
 | ✅ | Test coverage for the above | `tests/test_telemetry.py`, `tests/test_guards.py` |
 
-### Deploy checklist — do these before the next Render deploy
+### Deploy checklist
 
-1. `python setup_db.py` — creates `agent_runs`, `agent_events`, adds
-   `blog_views.expires_at`, **drops the anon read policies**. Idempotent.
-2. Set `DASHBOARD_PASSWORD` on Render. `APP_SECRET` and `VIEW_HASH_SALT` are
-   `generateValue: true` and will be created automatically.
-3. Add repo secret `PURGE_URL` = `https://<render-host>/api/privacy/purge`.
-4. Deploy, then confirm: visiting the dashboard redirects to `/login`, and
-   `curl -X POST https://<host>/api/run` returns **401**.
-5. Run one topic and confirm `/swarm` shows the agents firing.
+Host: `https://buteforce-blog-dashboard.onrender.com`
 
-> ⚠️ Step 1 drops the anon policies. Anything reading these tables with the anon
-> key will stop working. Nothing in this repo does — all dashboard reads go
-> through server routes on the service key — but check any external consumer first.
+| | Step | Status |
+|---|---|---|
+| ✅ | Schema migration — `agent_runs`, `agent_events`, `blog_views.expires_at`, `purge_expired_views()` | Applied via Supabase MCP 2026-07-28 (project `mrfiusskqnnsjmfiffci`). `setup_db.py` is idempotent and reaches the same state if you prefer to run it. |
+| ✅ | Code deployed | `bc8df4e` live. Verified: `POST /api/run` unauthenticated → `401 auth_not_configured` |
+| ✅ | Anon RLS read policies dropped | Verified: anon reads 0 rows, service key reads 33 topics / 11 posts |
+| ✅ | Retention live | A tracked view wrote `expires_at` at +90d, UA reduced to a family, no session id |
+| ⬜ | **Set `DASHBOARD_PASSWORD` on Render** | Until set, the dashboard fails closed and nobody can sign in |
+| ⬜ | **Set `AUTOPILOT_TICK_SECRET` on Render** | `/api/autopilot/tick` currently returns **503 "not configured"** — the hourly cron is not running |
+| ⬜ | Add repo secret `PURGE_URL` = `https://buteforce-blog-dashboard.onrender.com/api/privacy/purge` | Daily retention purge |
+| ⬜ | Run one topic and confirm `/swarm` shows the agents firing | Final smoke test |
+
+> Rollback for the RLS drop, if the dashboard ever goes blank:
+> ```sql
+> CREATE POLICY anon_read_topics ON topics FOR SELECT USING (true);
+> CREATE POLICY anon_read_blog_posts ON blog_posts FOR SELECT USING (true);
+> ```
 
 ---
 
