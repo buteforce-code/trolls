@@ -17,8 +17,8 @@ Providers
 Env vars
 --------
 LLM_PROVIDER       openai | gemini            (default: openai)
-OPENAI_MODEL       OpenAI chat model name     (default: gpt-4o)
-OPENAI_MAX_TOKENS  max output tokens          (default: 4096)
+OPENAI_MODEL       OpenAI chat model name     (default: gpt-5.4)
+OPENAI_MAX_TOKENS  max output tokens          (default: 8192)
 ADK_GEMINI_MODEL   Gemini model name          (default: gemini-2.0-flash)
 """
 from __future__ import annotations
@@ -26,15 +26,25 @@ from __future__ import annotations
 import os
 from typing import Any
 
-DEFAULT_OPENAI_MODEL = "gpt-4o"
+# gpt-4o was the default until 2026-08-02 and could not write long-form: it settled
+# at ~650-760 words against the pipeline's 1,100-word floor and failed the length
+# gate on every run. A bake-off on the real writer prompt (n=3) put gpt-4.1 astride
+# the floor at 1069-1322 words and gpt-5.4 clear of it at 2135-2309, passing the GEO
+# gate 3/3. The default matters: if OPENAI_MODEL goes missing from the environment,
+# this is what the whole swarm silently falls back to.
+DEFAULT_OPENAI_MODEL = "gpt-5.4"
 DEFAULT_GEMINI_MODEL = "gemini-2.0-flash"
 
 # A 1,400–2,000 word post is roughly 1,900–2,700 tokens before frontmatter and
 # markdown. LiteLLM does not set max_tokens itself, so leaving it unset meant
 # relying on provider defaults — a contributing factor in the truncated ~550-word
-# drafts that shipped after the 2026-06-29 switch to gpt-4o. 4096 leaves headroom
-# for the longest compliant post without allowing runaway generations.
-DEFAULT_MAX_TOKENS = 4096
+# drafts that shipped after the 2026-06-29 switch to gpt-4o.
+#
+# 8192 rather than 4096 since gpt-5.4: it writes longer posts (a 2,309-word draft
+# measured 2,923 output tokens, already 71% of the old cap) and, as a reasoning
+# model, bills reasoning tokens against this same budget. A cap is not a target —
+# unused headroom costs nothing, and hitting the cap truncates mid-post.
+DEFAULT_MAX_TOKENS = 8192
 
 
 def _provider() -> str:

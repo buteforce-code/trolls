@@ -295,6 +295,22 @@ def _run(agent: LlmAgent, prompt: str, session_id: str) -> str:
 MIN_BODY_WORDS = 1_100
 _LENGTH_RETRIES = 1
 
+# What the expansion pass aims for, not the floor it must clear. Two later stages
+# shave words off a draft — the humaniser tightens prose, the GEO repair pass
+# rewrites sections — and both have pushed a draft that landed exactly on the floor
+# back under it. Aim inside the 1,400–2,000 band the writer prompt asks for.
+_LENGTH_TARGET_WORDS = 1_450
+# Per-H2 bounds for the expansion pass. 320 is the writer prompt's own "250–350
+# words per section"; the ceiling stops one section from swallowing the post.
+_SECTION_TARGET_WORDS = 320
+_SECTION_MAX_WORDS = 420
+# Enough calls to grow 5–7 thin sections, bounded so a writer that will not grow
+# anything cannot burn the run's budget trying.
+_MAX_EXPANSION_CALLS = 8
+# Below this, an expansion call did not actually add anything — stop asking that
+# section and move to the next one.
+_MIN_SECTION_GROWTH = 25
+
 # ── GEO template gate ────────────────────────────────────────────────────────
 # Same lesson, second application. The answer-engine template (question H2 +
 # self-contained answer, hard numbers, competitor table, "not a fit if…") is in
@@ -308,6 +324,67 @@ def _body_word_count(mdx: str) -> int:
     """Word count of the post body, excluding YAML frontmatter."""
     body = mdx.split("---", 2)[-1] if mdx.lstrip().startswith("---") else mdx
     return len(body.split())
+
+
+_FRONTMATTER_BLOCK = re.compile(r"^(\s*---\s*\n.*?\n---\s*\n)(.*)$", re.DOTALL)
+
+
+def _split_head_body(mdx: str) -> tuple[str, str]:
+    """Return (frontmatter_block, body), keeping the `---` delimiters on the head.
+
+    Unlike `geo.split_frontmatter`, which returns the frontmatter's *contents*, this
+    keeps the block verbatim so `head + body` reassembles the file byte for byte.
+    """
+    m = _FRONTMATTER_BLOCK.match(mdx)
+    return (m.group(1), m.group(2)) if m else ("", mdx)
+
+
+_H2_LINE = re.compile(r"^##\s+\S")
+
+
+def _split_body_sections(body: str) -> tuple[str, list[str]]:
+    """Split a post body at top-level `##` headings, losslessly.
+
+    Returns `(preamble, sections)` — the preamble holds the H1 and intro, and each
+    section string starts with its own `## ` line and runs to the next one (H3s stay
+    with their parent). `preamble + "".join(sections)` reproduces `body` exactly, so
+    the expansion pass can swap one section and reassemble without disturbing the
+    rest. `geo.parse_sections` cannot be used for this: it blanks out fenced code to
+    avoid reading a `##` inside a fence as a heading, which is right for auditing and
+    lossy for rewriting.
+    """
+    preamble: list[str] = []
+    sections: list[list[str]] = []
+    in_fence = False
+    for line in body.splitlines(keepends=True):
+        if line.lstrip().startswith("```"):
+            in_fence = not in_fence
+        elif not in_fence and _H2_LINE.match(line):
+            sections.append([line])
+            continue
+        (sections[-1] if sections else preamble).append(line)
+    return "".join(preamble), ["".join(s) for s in sections]
+
+
+def _clean_expanded_section(raw: str, heading_line: str) -> str:
+    """Reduce a writer reply to just the section, under its original heading.
+
+    The heading is restored from the caller rather than trusted from the reply: the
+    question-form H2s and the "not a fit if…" heading are GEO-template surfaces, and
+    an expansion pass has no business renaming them.
+    """
+    text = raw.strip()
+    fenced = re.match(r"^```[a-zA-Z]*\s*\n(.*?)\n```\s*$", text, re.DOTALL)
+    if fenced:
+        text = fenced.group(1).strip()
+
+    lines = text.splitlines()
+    for idx, line in enumerate(lines):
+        if _H2_LINE.match(line):
+            # Everything before the first H2 is commentary or invented frontmatter.
+            rest = "\n".join(lines[idx + 1:]).strip()
+            return f"{heading_line.rstrip()}\n\n{rest}\n\n"
+    return f"{heading_line.rstrip()}\n\n{text}\n\n"
 
 
 # ── Orchestrator ─────────────────────────────────────────────────────────────
@@ -495,46 +572,166 @@ class BlogOrchestrator:
             _mark_failed(slug, topic_id, "writer", exc)
             raise
 
-    def _enforce_length(self, draft: str, writer_prompt: str, topic_id: str) -> str:
-        """Re-run the writer while the draft is under the floor; raise if it never gets there.
+    def _rewrite_section(
+        self, section: str, target_words: int, writer_prompt: str, topic_id: str, call_no: int
+    ) -> str:
+        """Ask the writer to re-draft one H2 section at `target_words`, and return just it."""
+        heading_line = section.splitlines()[0]
+        current = len(section.split())
+        raw = _run(
+            self.writer_agent,
+            f"{writer_prompt}\n\n"
+            f"You have already drafted this post. Expand ONE section of it.\n\n"
+            f"Rewrite the section below so it runs about {target_words} words — it is "
+            f"currently {current}. Rules for this reply:\n"
+            f"- Return that section ONLY. No frontmatter, no other sections, no commentary,\n"
+            f"  no markdown fence around the whole reply.\n"
+            f"- Open with its heading line exactly as given: {heading_line.strip()}\n"
+            f"- Keep every markdown table, list and ### sub-heading already in it, and do not\n"
+            f"  add a second ## heading.\n"
+            f"- Add substance, not length: the specific example, the named mechanism, the\n"
+            f"  number with its source, the failure you have watched happen on a line. If you\n"
+            f"  cannot add evidence, add nothing — do not restate the section in new words.\n"
+            f"- Same voice, banned words and evidence rules as the rest of the post.\n\n"
+            f"SECTION:\n{section}",
+            f"writer-{topic_id}-expand-{call_no}",
+        )
+        return _clean_expanded_section(raw, heading_line)
 
-        Failing loudly is deliberate — a short draft lands the topic in `failed`
-        for human review instead of quietly publishing another thin post.
+    def _expand_sections(self, draft: str, writer_prompt: str, topic_id: str) -> str:
+        """Grow a short draft one H2 at a time until it clears `_LENGTH_TARGET_WORDS`.
+
+        Asking the model to rewrite the whole post "but longer" does not work. gpt-4o
+        stops around 1,000 output tokens whatever the prompt says (max_tokens is 4096,
+        so this is the model settling, not truncation), and handing it the short draft
+        anchors the retry to that length — the run on 2026-08-02 went 634 → 764 words
+        against an 1,100 floor and failed. A single section is a small enough ask that
+        the model does comply, and the total then follows from arithmetic rather than
+        from asking more insistently.
+
+        Returns the draft unchanged when there are no `##` sections to work with; the
+        caller falls back to a whole-draft rewrite in that case.
         """
-        recorder = get_recorder()
-        for attempt in range(1, _LENGTH_RETRIES + 1):
-            words = _body_word_count(draft)
-            if words >= MIN_BODY_WORDS:
-                recorder.gate("length_gate", passed=True, attempt=attempt)
-                return draft
+        head, body = _split_head_body(draft)
+        preamble, sections = _split_body_sections(body)
+        if not sections:
+            print("[writer] Draft has no ## sections to expand.", flush=True)
+            return draft
 
+        def total_words() -> int:
+            return len(preamble.split()) + sum(len(s.split()) for s in sections)
+
+        exhausted: set[int] = set()
+        call_no = 0
+        # `call_no` counts calls actually made, so skipping an at-ceiling section
+        # costs a loop turn, not one of the budgeted LLM calls.
+        while call_no < _MAX_EXPANSION_CALLS:
+            total = total_words()
+            if total >= _LENGTH_TARGET_WORDS:
+                break
+            candidates = [i for i in range(len(sections)) if i not in exhausted]
+            if not candidates:
+                print("[writer] No section will grow further; stopping expansion.", flush=True)
+                break
+
+            # Thinnest section first: that is where the writer asserted without evidence.
+            i = min(candidates, key=lambda k: len(sections[k].split()))
+            current = len(sections[i].split())
+            want = min(
+                max(current + (_LENGTH_TARGET_WORDS - total), _SECTION_TARGET_WORDS),
+                _SECTION_MAX_WORDS,
+            )
+            if want - current < _MIN_SECTION_GROWTH:
+                # Already at the ceiling — asking would spend a call to gain nothing.
+                exhausted.add(i)
+                continue
+            heading = sections[i].splitlines()[0].strip()
+            call_no += 1
             print(
-                f"[writer] Draft is {words} words, below the {MIN_BODY_WORDS} floor. "
-                f"Expanding (attempt {attempt}/{_LENGTH_RETRIES})...",
+                f"[writer] Expanding section {i + 1}/{len(sections)} "
+                f"({current} → ~{want} words, post at {total}): {heading[:70]}",
                 flush=True,
             )
-            recorder.gate(
-                "length_gate", passed=False,
-                reason=f"{words} words, floor is {MIN_BODY_WORDS}", attempt=attempt,
-            )
-            draft = _run(
-                self.writer_agent,
-                f"{writer_prompt}\n\n"
-                f"YOUR PREVIOUS DRAFT WAS {words} WORDS — REJECTED. It must be 1,400–2,000.\n"
-                f"Rewrite it in full at the required length. Do not summarise or reuse the\n"
-                f"short version. Add depth where you asserted without evidence: name the\n"
-                f"mechanism, give the specific example, cite the number and its source.\n"
-                f"Do not pad with restatement.\n\nPREVIOUS DRAFT:\n{draft}",
-                f"writer-{topic_id}-expand-{attempt}",
-            )
+
+            expanded = self._rewrite_section(sections[i], want, writer_prompt, topic_id, call_no)
+            grown = len(expanded.split()) - current
+            # A reply several times the size asked for is the writer re-emitting the whole
+            # post under one heading. Reassembling that would duplicate the article.
+            if len(expanded.split()) > want * 3:
+                print(
+                    f"[writer] Expansion returned {len(expanded.split())} words for a "
+                    f"~{want}-word section — discarding, it is not one section.",
+                    flush=True,
+                )
+                exhausted.add(i)
+                continue
+            if grown < _MIN_SECTION_GROWTH:
+                print(f"[writer] Section {i + 1} did not grow ({grown:+d} words).", flush=True)
+                exhausted.add(i)
+                continue
+
+            sections[i] = expanded
+            if len(expanded.split()) >= _SECTION_MAX_WORDS:
+                exhausted.add(i)
+
+        return head + preamble + "".join(sections)
+
+    def _enforce_length(self, draft: str, writer_prompt: str, topic_id: str) -> str:
+        """Bring the draft up to the floor, or fail the run.
+
+        Failing loudly is deliberate — a short draft lands the topic in `failed` for
+        human review instead of quietly publishing another thin post.
+        """
+        recorder = get_recorder()
+        words = _body_word_count(draft)
+        if words >= MIN_BODY_WORDS:
+            recorder.gate("length_gate", passed=True, attempt=1)
+            return draft
+
+        print(
+            f"[writer] Draft is {words} words, below the {MIN_BODY_WORDS} floor. "
+            f"Expanding section by section...",
+            flush=True,
+        )
+        recorder.gate(
+            "length_gate", passed=False,
+            reason=f"{words} words, floor is {MIN_BODY_WORDS}", attempt=1,
+        )
+
+        expanded = self._expand_sections(draft, writer_prompt, topic_id)
+        if _body_word_count(expanded) > words:
+            draft = expanded
+        else:
+            # Expansion gained nothing — either the draft has no ## sections, or the
+            # writer would not grow any of them. A whole-draft rewrite is what is left.
+            for attempt in range(1, _LENGTH_RETRIES + 1):
+                draft = _run(
+                    self.writer_agent,
+                    f"{writer_prompt}\n\n"
+                    f"YOUR PREVIOUS DRAFT WAS {words} WORDS — REJECTED. It must be 1,400–2,000\n"
+                    f"and it must be built from 5–7 ## sections of 250–350 words each.\n"
+                    f"Rewrite it in full at the required length. Do not summarise or reuse the\n"
+                    f"short version. Add depth where you asserted without evidence: name the\n"
+                    f"mechanism, give the specific example, cite the number and its source.\n"
+                    f"Do not pad with restatement.\n\nPREVIOUS DRAFT:\n{draft}",
+                    f"writer-{topic_id}-rewrite-{attempt}",
+                )
+                if _body_word_count(draft) >= MIN_BODY_WORDS:
+                    break
 
         words = _body_word_count(draft)
         if words < MIN_BODY_WORDS:
+            recorder.gate(
+                "length_gate", passed=False,
+                reason=f"{words} words after expansion, floor is {MIN_BODY_WORDS}", attempt=2,
+            )
             raise RuntimeError(
-                f"Writer produced {words} words after {_LENGTH_RETRIES} retries "
+                f"Writer produced {words} words after a section-by-section expansion pass "
                 f"(floor is {MIN_BODY_WORDS}). Holding for human review rather than "
                 f"publishing a thin post."
             )
+        recorder.gate("length_gate", passed=True, attempt=2)
+        print(f"[writer] Expansion brought the draft to {words} words.", flush=True)
         return draft
 
     def _enforce_geo_template(self, draft: str, writer_prompt: str, topic_id: str) -> str:

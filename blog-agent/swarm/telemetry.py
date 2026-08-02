@@ -63,12 +63,20 @@ RUN_STATUS_FAILED = "failed"
 # ── Cost model ───────────────────────────────────────────────────────────────
 # USD per 1,000,000 tokens, (input, output).
 #
-# ⚠️ These are list prices captured 2026-07-28, not a live feed. They exist to
-# make relative cost visible and to enforce a ceiling — not for invoicing. Vendor
-# pricing drifts; re-check before any figure derived from this reaches a client
-# quote. Override a single model without a deploy via LLM_PRICE_OVERRIDES, e.g.
+# ⚠️ These are list prices captured 2026-08-02 from developers.openai.com/api/docs/pricing,
+# not a live feed. They exist to make relative cost visible and to enforce a
+# ceiling — not for invoicing. Vendor pricing drifts; re-check before any figure
+# derived from this reaches a client quote. Override a single model without a
+# deploy via LLM_PRICE_OVERRIDES, e.g.
 #   LLM_PRICE_OVERRIDES='{"openai/gpt-4o": [2.5, 10.0]}'
+#
+# gpt-5.4 is the active writer model. Its output token is 1.5x gpt-4o's, which is
+# the deliberate trade: gpt-4o was cheaper per call and could not clear the length
+# floor, so it burned a failed run plus an expansion pass instead of one call.
 DEFAULT_PRICES: dict[str, tuple[float, float]] = {
+    "gpt-5.4":              (2.50, 15.00),
+    "gpt-5.4-mini":         (0.75,  4.50),
+    "gpt-4.1":              (2.00,  8.00),
     "gpt-4o":               (2.50, 10.00),
     "gpt-4o-mini":          (0.15,  0.60),
     "gemini-2.0-flash":     (0.10,  0.40),

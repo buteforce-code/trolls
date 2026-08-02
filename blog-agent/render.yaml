@@ -33,8 +33,17 @@ services:
         value: openai
       - key: OPENAI_API_KEY
         sync: false
+      # gpt-4o cannot write long-form: it settles at ~650-760 words against the
+      # 1,100-word floor (not truncation — OPENAI_MAX_TOKENS is 4096) and failed
+      # the length gate on every run. Bake-off 2026-08-02, n=3 on the real writer
+      # prompt: gpt-4.1 straddled the floor (1069-1322, GEO 2/3); gpt-5.4 cleared
+      # the floor and the GEO gate 3/3 at 2135-2309 words. See .env.example.
       - key: OPENAI_MODEL
-        value: gpt-4o
+        value: gpt-5.4
+      # Set explicitly rather than left to the code default: gpt-5.4 bills reasoning
+      # tokens against this budget, and hitting it truncates a post mid-sentence.
+      - key: OPENAI_MAX_TOKENS
+        value: "8192"
       # ── Image generation (off by default) ──────────────────────────────────
       - key: ENABLE_IMAGES
         value: "false"
