@@ -1,5 +1,27 @@
 # FMCG Post — Rescue Plan (the money page)
 
+> ## ✅ DONE 2026-07-26 — Phases 1 and 2 both shipped in one pass.
+>
+> - **Title** → `Computer Vision for FMCG Quality Inspection in India (2026)` (as drafted below).
+> - **Meta** → rewritten defect-first. Deviates from the draft below on purpose: the draft meta
+>   read "on Indian FMCG lines at 120 packs/min — 99.2% accuracy", which implies those figures
+>   came from an FMCG deployment. They came from an orthopaedic-insole QC line (Case Study 1).
+>   The shipped meta keeps the defect list and drops the implied provenance.
+> - **Depth** → 797 → **1,443 words** with the defect-level H2s listed in Phase 2.
+> - **Fabrications removed** (not in the original plan, found during the rewrite): 600 packs/min,
+>   68.3% / 72.1% predictive-analytics adoption, a *20% quality-control accuracy gain attributed
+>   to Unilever and Nestlé*, and *22% wastage reduction + 15% production speed attributed to
+>   Buteforce*. None had a source. All five FAQ answers carried the same claims and were rewritten.
+> - Now passes the GEO template gate (`swarm/geo.py`): 2 question-H2 answer blocks, 3 proof
+>   numbers, competitor table incl. Cognex / Keyence / Optomech / Indus Vision, "not a fit if…",
+>   visible `dateModified`, named author.
+>
+> **Still outstanding:** the interlink step. `seed_cluster_expansion.py` has never been run, so
+> the 8 defect spokes this page should link across to do not exist yet. The page currently links
+> up to `/ai-automation-company-in-chennai` and `/pricing` instead.
+>
+> **This file is kept as the record of the diagnosis.** Original plan below.
+
 **Post:** `computer-vision-for-fmcg-manufacturing-in-india-what-unileve`
 **Live:** https://www.buteforce.com/blog/computer-vision-for-fmcg-manufacturing-in-india-what-unileve
 **Why it matters:** ~60% of all search visibility. Stuck on **page 2**. Converts nothing.

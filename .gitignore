@@ -6,6 +6,12 @@ zlogs.txt
 # Local agent/editor state — never commit
 .claude/
 
+# Shared Obsidian memory vault (symlink to D:\Projects\Buteforce\.agents).
+# It is its own git repo with its own history — never track its contents
+# here. 238 files were committed into this repo by accident before this
+# line existed; see the 2026-08-02 cleanup commit for the untrack.
+.agents/
+
 # Build artifacts / caches
 *.tsbuildinfo
 blog-agent/dashboard/out/
