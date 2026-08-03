@@ -100,6 +100,12 @@ COMPETITORS: tuple[str, ...] = (
     # Automation / agency category
     "UiPath", "Automation Anywhere", "Zapier", "Make.com", "n8n",
     "Accenture", "Infosys", "TCS", "Wipro", "LeewayHertz", "Appinventiv",
+    # AI coding assistants / dev tools (2026-08-02: the ideator started news-jacking
+    # this category — e.g. Sarvam Code vs. Claude Code vs. Codex — and the gate had
+    # no vocabulary for it, blocking every post in the vertical on the first run)
+    "Claude Code", "Codex", "Sarvam Code", "GitHub Copilot", "Cursor", "Windsurf",
+    "Devin", "Replit Agent", "Codeium", "Amazon Q Developer", "Tabnine", "Aider",
+    "Cline", "Google Jules",
 )
 MIN_COMPETITORS_IN_TABLE = 2
 MIN_TABLE_BODY_ROWS = 3
@@ -435,10 +441,14 @@ following before anything publishes, and a failure blocks the post. Build them i
 3. COMPETITOR-INCLUSIVE COMPARISON TABLE
    One markdown table comparing the options the buyer is really choosing between — at least
    {MIN_COMPETITORS_IN_TABLE} named competitors alongside Buteforce, {MIN_TABLE_BODY_ROWS}+ rows.
-   Pick the ones a reader of THIS post would actually shortlist, and include a column that says
-   honestly where each rival is the better choice. Cognex and Keyence beat us on
-   off-the-shelf sensor reliability; a SaaS platform beats us on time-to-first-result. Say so.
-   A table that only flatters Buteforce is a brochure and gets cited by nobody.
+   Use the ACTUAL rival names already sitting in the research digest — its summary, key_facts
+   and what_people_say name the products this post is about. Put those exact names in the
+   table; do not paraphrase into a category ("a SaaS platform", "other AI tools") and do not
+   invent a name the digest never mentioned. A gate checks the table against a fixed list of
+   known vendors, so an invented or paraphrased name fails even when the row is accurate.
+   Include a column that says honestly where each rival is the better choice — e.g. Cognex and
+   Keyence beat us on off-the-shelf sensor reliability. A table that only flatters Buteforce is
+   a brochure and gets cited by nobody.
 
 4. AN EXPLICIT "NOT A FIT IF…" SECTION
    One H2 that disqualifies readers by name: the volumes, budgets, timelines and problem shapes

@@ -252,6 +252,26 @@ def test_competitor_named_outside_a_table_does_not_count() -> int:
     return 0
 
 
+def test_ai_coding_tool_competitors_are_recognized() -> int:
+    """Regression, 2026-08-02: the ideator news-jacked the AI-coding-tools vertical
+    (Sarvam Code vs. Claude Code vs. Codex) and COMPETITORS had zero vocabulary for
+    it — every post in that category failed the gate on the first attempt because
+    none of the three names a reader would expect were on the recognized list.
+    """
+    coding_table = """
+| Tool | Hosting | Where it wins |
+|---|---|---|
+| Sarvam Code | India-hosted | Cost per task |
+| Claude Code | Terminal-native | Local, real-time integration |
+| Codex | Cloud | Broader delegation, workflow automation |
+"""
+    report = geo.audit(_compliant().replace(TABLE, coding_table))
+    if not report.ok:
+        _fail(f"a table naming Sarvam Code / Claude Code / Codex was rejected: {report.failures}")
+        return 1
+    return 0
+
+
 def test_multiple_tables_one_compliant_passes() -> int:
     """A spec table plus a real comparison table must not be penalised."""
     extra = "\n| Camera | Lens |\n|---|---|\n| Basler | 16mm |\n\n"
@@ -389,6 +409,7 @@ def main() -> int:
         ("table without named competitors fails", test_table_without_named_competitors_fails),
         ("two-row table fails", test_two_row_table_fails),
         ("competitor in prose does not count", test_competitor_named_outside_a_table_does_not_count),
+        ("AI coding-tool competitors recognised", test_ai_coding_tool_competitors_are_recognized),
         ("extra non-comparison table tolerated", test_multiple_tables_one_compliant_passes),
         ("missing 'not a fit' fails", test_missing_not_a_fit_fails),
         ("token 'not a fit' fails", test_token_not_a_fit_section_fails),
