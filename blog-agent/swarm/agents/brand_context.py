@@ -96,15 +96,17 @@ def _strategy_context() -> str:
     """
     positioning = _read(_CONFIG_ROOT / "positioning.md") or _read_knowledge_file("positioning.md")
     if not positioning:
-        # Hard fallback so the engine never silently reverts to a generic ICP.
+        # Hard fallback so the engine never silently reverts to a stale ICP.
         positioning = (
-            "Buteforce is Chennai's Industrial AI Company — precision AI systems for India's "
-            "manufacturing corridor (Hyundai, Michelin, Renault/Nissan, BMW in Tamil Nadu). "
-            "ICP: CTOs, plant heads, quality/ops leaders and founders at manufacturers and "
-            "multi-location retailers in India, especially the Chennai/Tamil Nadu corridor. "
-            "India-first — do not default to a US/UK/UAE/AU audience."
+            "Buteforce builds custom, production-grade AI systems — no consultants, no "
+            "pilots, no fluff — across computer vision, document AI/OCR, AI agents, workflow "
+            "automation, and AI-powered web applications. No vertical is the flagship. ICP: "
+            "founders, CTOs and operations leaders with a concrete workflow to solve, in any "
+            "market. Global — no default audience and no excluded one; Indian manufacturing "
+            "and the Chennai/Tamil Nadu corridor are real, proof-backed context, used only "
+            "where a post is genuinely about that corridor. Do not name or reference EasyBali."
         )
     return f"""
-=== POSITIONING & ICP (authoritative — India-first) ===
-{positioning[:2600]}
+=== POSITIONING & ICP (authoritative) ===
+{positioning[:3400]}
 """.strip()

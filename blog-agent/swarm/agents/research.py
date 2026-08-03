@@ -35,7 +35,7 @@ def make_research_agent(model: Any) -> LlmAgent:
         name="research_agent",
         model=model,
         instruction=f"""
-You are the Research Agent for Buteforce — Chennai's Industrial AI Company.
+You are the Research Agent for Buteforce — Precision AI Systems.
 
 {_brand_context()}
 
@@ -75,8 +75,8 @@ No markdown wrapper. No preamble. Output ONLY the raw JSON object.
     "Third specific fact",
     "Fourth specific fact — include at least one that is counterintuitive"
   ],
-  "buteforce_angle": "The specific contrarian or insider angle ONLY Buteforce would take. Must connect to the India-first 'Chennai's Industrial AI Company' positioning — land the angle on what this means for Indian manufacturers / the Tamil Nadu corridor (Hyundai, Michelin, Renault, BMW) where it fits. Must be non-obvious — not the generic 'AI is changing everything' take. What would surprise a reader who already knows the topic well?",
-  "target_keyword": "The single primary SEO keyword this post should rank for — choose from the SEO STRATEGY clusters above (prefer the India-specific keyword that matches the topic)",
+  "buteforce_angle": "The specific contrarian or insider angle ONLY Buteforce would take. Must connect to a real Buteforce capability (computer vision, document AI/OCR, AI agents, workflow automation, or AI-powered web apps) and its real proof points — not a vague 'AI is changing everything' take. Land it on the Chennai/Tamil Nadu manufacturing corridor ONLY when the topic is genuinely about that corridor; otherwise match the topic's real audience and geography. What would surprise a reader who already knows the topic well? Never reference EasyBali by name.",
+  "target_keyword": "The single primary SEO keyword this post should rank for — choose from the SEO STRATEGY clusters above (the cluster that actually matches the topic, not a default one)",
   "suggested_title": "A punchy, SEO-rich working title that contains the target_keyword and reflects the buteforce_angle — not the obvious angle",
   "suggested_slug": "url-friendly-slug-max-60-chars",
   "already_published": "Summary of what Buteforce has already published on similar topics (from get_published_posts) — or 'none' if nothing overlaps",
@@ -104,7 +104,8 @@ No markdown wrapper. No preamble. Output ONLY the raw JSON object.
 - key_facts must be verifiable data points, not vague claims. Prefer stats with context.
 - confidence_score = how thoroughly you could research this topic (0–100). Be honest.
 - If a tool returns an error or no results, note it in the relevant source_signals field and move on.
-- The post must serve Buteforce's ICP (see POSITIONING & ICP above): CTOs, plant heads, quality/operations leaders, and founders at manufacturers and multi-location retailers in INDIA — especially the Chennai / Tamil Nadu manufacturing corridor. India-first. Do NOT aim the content at a US/UK/UAE/AU audience; when a topic is global, land the angle on what it means for Indian manufacturers and the Chennai corridor.
+- The post must serve Buteforce's ICP (see POSITIONING & ICP above): a founder, CTO, or operations leader with a concrete workflow to solve, across computer vision, document AI, AI agents, workflow automation, or AI-powered web apps. Global — match the topic's real audience and geography rather than defaulting to one. The Chennai/Tamil Nadu manufacturing corridor is real, proof-backed context to use ONLY when the topic is genuinely about that corridor.
+- Never reference EasyBali by name, in any field.
 """.strip(),
         tools=[
             FunctionTool(get_published_posts),

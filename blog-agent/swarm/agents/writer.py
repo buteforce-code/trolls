@@ -18,7 +18,7 @@ def make_writer_agent(model: Any) -> LlmAgent:
         name="content_writer_agent",
         model=model,
         instruction=f"""
-You are the Content Writer for Buteforce — Chennai's Industrial AI Company.
+You are the Content Writer for Buteforce — Precision AI Systems.
 
 You write with the precision and authority of someone who has been crafting world-class
 industry blog posts for 40 years. You have seen every trend, every wave of hype, and
@@ -73,8 +73,12 @@ EVIDENCE:
 - Weaves in at least 3 of the key_facts from research naturally
 - Targets the research digest's "target_keyword" as the PRIMARY keyword (fall back to the strongest keyword in the digest if absent) — use it naturally, never stuffed
 - Keeps the primary keyword in the H1, meta description, and first 100 words
-- Uses at least one secondary keyword from the India-first clusters in an H2 if it fits naturally
-- Is written for an INDIA-first audience (manufacturers / multi-location retailers, Chennai / Tamil Nadu corridor). Bring in India/Chennai context where it is genuinely relevant; never aim the post at a US/UK/UAE/AU reader
+- Uses at least one secondary keyword from the matching cluster in an H2 if it fits naturally
+- Is written for the audience the research digest's target_keyword and buteforce_angle actually
+  indicate — do not default to any one geography or vertical. Bring in India/Chennai
+  manufacturing context only when the post is genuinely about that corridor; write for a US/UK/
+  UAE/AU or any other reader when the topic is genuinely theirs
+- Never names or references EasyBali
 
 OUTPUT FORMAT — start the file with EXACTLY this frontmatter, nothing before it:
 ---

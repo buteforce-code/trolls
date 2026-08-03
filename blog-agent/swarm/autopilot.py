@@ -6,7 +6,7 @@ One idempotent `run_tick()`:
      tick; re-space the rest so a backlog after downtime never dumps all at once).
   2. Keep AUTOPILOT_BUFFER finished posts scheduled ahead — research + write the next
      queued topic, then move it to 'scheduled' at the next free slot (24h veto window).
-  3. When the queue is empty, run the ideator to generate fresh India-first topics.
+  3. When the queue is empty, run the ideator to generate fresh topics across every vertical.
 
 Cadence is enforced by per-post `scheduled_for` timestamps, so the tick can fire on a
 coarse schedule (hourly is plenty). Designed to be triggered by GitHub Actions hitting

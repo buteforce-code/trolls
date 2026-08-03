@@ -6,10 +6,19 @@
 > Refresh after each GSC export (queries + pages + countries).
 > Last updated from GSC: **2026-07-25**.
 
+> **2026-08-03 caveat:** "manufacturing/CV = 100% of non-brand impressions" is partly circular —
+> for the two months this data covers, manufacturing/CV was close to the only vertical being
+> published, so it was the only thing that *could* show impressions. Treat the FMCG page-2
+> opportunity below as a real, worth-fixing target, not as proof that other verticals (AI
+> agents, document AI, workflow automation, AI-powered web apps) won't also rank once they get
+> a fair number of posts. See `positioning.md` for the broader vertical set.
+
 ## The one rule this file exists to enforce
 
-**Double down on what ranks. Stop spreading thin.** Two topics are carrying the entire
-non-brand search footprint. The job is to feed that winner, not to chase new unproven clusters.
+**Double down on what ranks. Stop spreading thin** — within a vertical that already has proof.
+Two topics are carrying the entire non-brand search footprint; the FMCG page in particular is a
+genuine high-ROI fix. That does not mean every future batch should default here — see the
+caveat above.
 
 ## Proven demand (rank hard here)
 

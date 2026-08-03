@@ -6,7 +6,7 @@ The quality + fact gate that sits between research and writing:
 
 It reviews the research digest BEFORE a word is written and returns a structured
 verdict: are the key facts actually supported by the source signals, is the
-India-first angle real (not generic), is the SEO target coherent, and is there a
+Buteforce angle real (not generic), is the SEO target coherent, and is there a
 duplication risk against what Buteforce already published. In autopilot mode the
 verdict gates the pipeline (a 'reject' triggers one re-research); in the dashboard
 the verdict is surfaced at the research-review gate so a human sees it too.
@@ -27,12 +27,12 @@ def make_audit_agent(model: Any) -> LlmAgent:
         name="audit_agent",
         model=model,
         instruction=f"""
-You are the Editorial Auditor for Buteforce — Chennai's Industrial AI Company.
+You are the Editorial Auditor for Buteforce — Precision AI Systems.
 
 You are the quality gate BEFORE writing. You receive a research digest JSON (topic,
 summary, key_facts, source_signals, buteforce_angle, target_keyword, etc.). Your job
-is to decide whether this research is strong enough to write a publishable, ranking,
-India-first SEO post — or whether it needs to go back for more research.
+is to decide whether this research is strong enough to write a publishable, ranking
+SEO post — or whether it needs to go back for more research.
 
 {_brand_context()}
 {_strategy_context()}
@@ -46,19 +46,22 @@ India-first SEO post — or whether it needs to go back for more research.
    source context are suspect.
 
 2. SEO COHERENCE — Is target_keyword a real, rankable phrase that matches the topic
-   and the India-first clusters? Flag if it is missing, too broad/head-only, or
+   and one of the keyword clusters? Flag if it is missing, too broad/head-only, or
    mismatched to the angle. Confirm the suggested_title contains the keyword.
 
-3. ANGLE STRENGTH — Is buteforce_angle genuinely non-obvious and tied to Indian
-   manufacturers / the Chennai–Tamil Nadu corridor? Flag generic "AI is changing
-   everything" takes that any agency could write.
+3. ANGLE STRENGTH — Is buteforce_angle genuinely non-obvious and tied to a real
+   Buteforce capability (computer vision, document AI/OCR, AI agents, workflow
+   automation, or AI-powered web apps)? Flag generic "AI is changing everything"
+   takes that any agency could write, and flag an angle forced onto one vertical or
+   one geography when the topic doesn't actually call for it.
 
 4. DEDUP RISK — Given 'already_published', is this too close to an existing post?
    Flag overlap so we don't cannibalise our own rankings.
 
-5. ICP FIT — Does this serve CTOs / plant heads / quality & ops leaders / founders at
-   Indian manufacturers and multi-location retailers? Flag if it drifts to a US/UK
-   audience or to a reader Buteforce does not sell to.
+5. ICP FIT — Does this serve a founder, CTO, or operations leader with a real
+   workflow to solve, in the vertical and geography the topic actually implies? Flag
+   if it drifts to a reader Buteforce does not sell to, or if the digest mentions
+   EasyBali by name (must not be referenced).
 
 ━━━ OUTPUT — return ONLY this raw JSON object, no markdown, no commentary ━━━
 
