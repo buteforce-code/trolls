@@ -183,6 +183,20 @@ def recorded_run(topic_slug: str, topic_id: str | None = None, trigger: str = "m
 
 
 # ── ADK runner ───────────────────────────────────────────────────────────────
+# Neither provider in this stack imposes its own request timeout — LiteLLM/OpenAI
+# doesn't (llm.py passes only `model` and `max_tokens`), and the ADK Runner doesn't
+# either. A stalled HTTP connection blocks the awaiting coroutine forever: no
+# exception, so the retry logic below never engages and nothing ever calls
+# _mark_failed. 2026-08-02: a topic sat in status=writing for 679+ minutes after
+# the log showed `social_agent · agent_started` and then nothing — no crash, no
+# further cost, no way out short of a manual "Re-run from scratch". This bounds
+# every agent call so a hang becomes a retryable timeout instead of an indefinite
+# stall. 240s is generous headroom above the slowest measured real call (the
+# research agent's tool-using calls can run long; a plain writer/humaniser call
+# finishes in 20-35s per the 2026-08-02 gpt-5.4 bake-off).
+_AGENT_CALL_TIMEOUT_S = 240
+
+
 async def _run_agent(
     agent: LlmAgent, prompt: str, session_id: str, retries: int = 3
 ) -> tuple[str, int, int]:
@@ -197,25 +211,33 @@ async def _run_agent(
     out_tokens = 0
     for attempt in range(retries):
         try:
-            svc = InMemorySessionService()
-            session = await svc.create_session(
-                app_name=agent.name, user_id="dhyan", session_id=f"{session_id}-{attempt}"
-            )
-            runner = Runner(agent=agent, app_name=agent.name, session_service=svc)
-            content = genai_types.Content(role="user", parts=[genai_types.Part(text=prompt)])
-            parts: list[str] = []
-            async for event in runner.run_async(user_id="dhyan", session_id=session.id, new_message=content):
-                ev_in, ev_out = tm.extract_usage(event)
-                in_tokens += ev_in
-                out_tokens += ev_out
-                if hasattr(event, "content") and event.content:
-                    for p in event.content.parts:
-                        if hasattr(p, "text") and p.text:
-                            parts.append(p.text)
-            return "".join(parts).strip(), in_tokens, out_tokens
+            async def _attempt() -> str:
+                nonlocal in_tokens, out_tokens
+                svc = InMemorySessionService()
+                session = await svc.create_session(
+                    app_name=agent.name, user_id="dhyan", session_id=f"{session_id}-{attempt}"
+                )
+                runner = Runner(agent=agent, app_name=agent.name, session_service=svc)
+                content = genai_types.Content(role="user", parts=[genai_types.Part(text=prompt)])
+                parts: list[str] = []
+                async for event in runner.run_async(
+                    user_id="dhyan", session_id=session.id, new_message=content
+                ):
+                    ev_in, ev_out = tm.extract_usage(event)
+                    in_tokens += ev_in
+                    out_tokens += ev_out
+                    if hasattr(event, "content") and event.content:
+                        for p in event.content.parts:
+                            if hasattr(p, "text") and p.text:
+                                parts.append(p.text)
+                return "".join(parts).strip()
+
+            text = await asyncio.wait_for(_attempt(), timeout=_AGENT_CALL_TIMEOUT_S)
+            return text, in_tokens, out_tokens
         except Exception as exc:
             last_err = exc
             msg = str(exc).lower()
+            is_timeout = isinstance(exc, asyncio.TimeoutError)
             # Rate-limit / quota — OpenAI (429, "rate limit", "insufficient_quota")
             # and Gemini ("resource exhausted", "quota").
             is_quota = (
@@ -226,21 +248,30 @@ async def _run_agent(
                 or "ratelimit" in msg
             )
             # Transient capacity / server errors worth retrying — OpenAI (500/502/503,
-            # "overloaded", "service unavailable") and Gemini (503/UNAVAILABLE).
+            # "overloaded", "service unavailable"), Gemini (503/UNAVAILABLE), and a
+            # connection that never returned within _AGENT_CALL_TIMEOUT_S.
             is_unavailable = (
-                "503" in msg or "502" in msg or "500" in msg
+                is_timeout
+                or "503" in msg or "502" in msg or "500" in msg
                 or "unavailable" in msg or "overloaded" in msg
                 or "high demand" in msg or "timeout" in msg
                 or "timed out" in msg or "apiconnection" in msg
             )
             if (is_quota or is_unavailable) and attempt < retries - 1:
                 wait = 20 * (attempt + 1)
-                reason = "Quota" if is_quota else "Model unavailable (503)"
+                reason = "Quota" if is_quota else ("Call timed out" if is_timeout else "Model unavailable (503)")
                 print(f"  [WAIT] {reason}, retrying in {wait}s...", flush=True)
                 await asyncio.sleep(wait)
             else:
                 break
-    raise RuntimeError(f"Agent '{agent.name}' failed after {retries} attempts: {last_err}")
+    # asyncio.TimeoutError stringifies to '' — without this, the failure this
+    # timeout exists to surface would itself read as a blank, undiagnosable error.
+    err_desc = (
+        f"timed out after {_AGENT_CALL_TIMEOUT_S}s"
+        if isinstance(last_err, asyncio.TimeoutError)
+        else str(last_err)
+    )
+    raise RuntimeError(f"Agent '{agent.name}' failed after {retries} attempts: {err_desc}")
 
 
 def _run(agent: LlmAgent, prompt: str, session_id: str) -> str:
