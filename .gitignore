@@ -16,3 +16,6 @@ zlogs.txt
 *.tsbuildinfo
 blog-agent/dashboard/out/
 blog-agent/dashboard/.next/
+
+# Playwright MCP debug artifacts — local tool output, not project state.
+.playwright-mcp/
