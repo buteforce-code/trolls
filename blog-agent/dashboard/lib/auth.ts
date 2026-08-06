@@ -122,9 +122,16 @@ export async function checkPassword(candidate: string, expected: string): Promis
  * which leaks the shared secret's prefix through comparison timing.
  */
 export function bearerMatches(header: string | null, secret: string): boolean {
-  if (!secret) return false
+  // Both sides are trimmed. The header was already, but the secret was not —
+  // and it arrives from a hosting panel's environment editor, where a trailing
+  // newline or a stray space survives a copy-paste invisibly. The symptom is a
+  // flat 401 with no clue attached, on a value that looks identical to the one
+  // that was pasted. Trimming here costs nothing and removes a whole class of
+  // unexplainable deployment failure.
+  const expected = (secret || '').trim()
+  if (!expected) return false
   const token = (header || '').replace(/^Bearer\s+/i, '').trim()
-  return timingSafeEqual(token, secret)
+  return timingSafeEqual(token, expected)
 }
 
 export type AuthConfig = { secret: string; password: string; configured: boolean }
