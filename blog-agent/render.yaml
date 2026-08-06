@@ -114,6 +114,21 @@ services:
       # authenticates the daily analytics ingest.
       - key: AUTOPILOT_TICK_SECRET
         sync: false
+      # ── Google service account ────────────────────────────────────────────
+      # Used by Vertex and by the Search Console + GA4 readers. The key cannot
+      # live in the repo, so the JSON is pasted into GOOGLE_CREDENTIALS_JSON in
+      # the Render dashboard and `scripts/write-gcp-creds.js` (a prestart hook)
+      # writes it to the path below at boot.
+      #
+      # Both were previously undeclared, which is why analytics ingestion
+      # returned HTTP 200 and then did nothing: the endpoint spawns the Python
+      # job in the background and answers immediately, so a job that died at
+      # credential loading looked exactly like a successful trigger.
+      - key: GOOGLE_APPLICATION_CREDENTIALS
+        value: /tmp/gcp-creds.json
+      - key: GOOGLE_CREDENTIALS_JSON
+        sync: false
+
       # ── Analytics (the feedback loop) ─────────────────────────────────────
       # Search Console property identifier. Domain properties are
       # "sc-domain:buteforce.com"; URL-prefix properties are the full prefix
