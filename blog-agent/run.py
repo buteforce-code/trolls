@@ -73,13 +73,65 @@ def main():
                    help="Run one autonomous tick: publish due posts, keep the buffer full, refill the queue")
     g.add_argument("--produce-all", action="store_true", dest="produce_all",
                    help="Catch-up: research+audit+write EVERY queued topic now and schedule them on cadence")
+    g.add_argument("--ingest-analytics", action="store_true", dest="ingest_analytics",
+                   help="Pull Search Console + GA4 performance data for every published post")
+    g.add_argument("--check-analytics", action="store_true", dest="check_analytics",
+                   help="Probe analytics credentials and property config without writing anything")
+    g.add_argument("--learn", action="store_true",
+                   help="Score every published post, fit the bandit, and rank the queue")
+    g.add_argument("--scout", action="store_true",
+                   help="Sweep trend sources, gate them against the brand, and store scored signals")
 
     parser.add_argument("--tags",     default="", help="Comma-separated tags (used with --topic)")
     parser.add_argument("--feedback", default="", help="Rejection feedback (used with --reject)")
     parser.add_argument("--stage",    choices=["research", "write", "publish"],
                         help="Force a specific stage to run (used with --topic on existing slug)")
+    parser.add_argument("--days", type=int, default=None,
+                        help="Trailing window for --ingest-analytics (default ANALYTICS_INGEST_DAYS, or 90 to backfill)")
 
     args = parser.parse_args()
+
+    # ── Analytics ─────────────────────────────────────────────────────────────
+    # Handled before BlogOrchestrator is constructed: ingestion is pure data
+    # movement and has no business paying the cost of spinning up the LLM agents.
+    if args.check_analytics:
+        from swarm.analytics.ingest import check
+        for line in check():
+            print(line, flush=True)
+        return
+
+    if args.ingest_analytics:
+        from swarm.analytics.ingest import run_ingest
+        from swarm.learning.engine import run_learning
+
+        db = _db()
+        for line in run_ingest(db, days=args.days):
+            print(line, flush=True)
+
+        # Learn immediately after, in the same process. Chaining here rather than
+        # as a second scheduled job guarantees the ordering: beliefs are always
+        # derived from the data that was just fetched, never from yesterday's.
+        # It is pure computation over stored rows, so it costs nothing extra.
+        try:
+            for line in run_learning(db):
+                print(line, flush=True)
+        except Exception as exc:
+            print(f"[learning] FAILED after ingest: {exc}", flush=True)
+        return
+
+    # HTTP fetches plus deterministic scoring — no agents, no LLM calls.
+    if args.scout:
+        from swarm.trends.scout import run_scout
+        for line in run_scout(_db()):
+            print(line, flush=True)
+        return
+
+    # Pure computation over already-stored metrics — no agents, no LLM calls.
+    if args.learn:
+        from swarm.learning.engine import run_learning
+        for line in run_learning(_db()):
+            print(line, flush=True)
+        return
 
     # Validate any slug before it reaches a database filter or a log path. The
     # dashboard passes these through from HTTP, so "it came from our own UI" is

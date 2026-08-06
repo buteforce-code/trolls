@@ -1,0 +1,64 @@
+name: Analytics Ingest
+
+# Pulls Search Console + GA4 performance data for every published post into
+# Supabase, which is what the scoring and learning layers read.
+#
+# Daily, not hourly: Search Console publishes at day granularity and revises the
+# last 2-3 days afterwards. The ingester re-pulls a trailing window every run
+# (ANALYTICS_INGEST_DAYS) and upserts on the natural key, so those revisions
+# correct existing rows instead of accumulating duplicates.
+#
+# Runs at 01:40 UTC = 07:10 IST — after Google has finalised the previous day,
+# and before anyone looks at the dashboard.
+#
+# Required repo secrets (Settings → Secrets and variables → Actions):
+#   ANALYTICS_INGEST_URL   e.g. https://buteforce-blog-dashboard.onrender.com/api/analytics/ingest
+#   AUTOPILOT_TICK_SECRET  the same secret the autopilot tick uses
+
+on:
+  schedule:
+    - cron: '40 1 * * *'
+  workflow_dispatch:
+    inputs:
+      days:
+        description: 'Trailing window in days (leave blank for the default; use 90 for an initial backfill)'
+        required: false
+        type: string
+
+concurrency:
+  group: analytics-ingest
+  cancel-in-progress: false
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger analytics ingest
+        env:
+          INGEST_URL: ${{ secrets.ANALYTICS_INGEST_URL }}
+          INGEST_SECRET: ${{ secrets.AUTOPILOT_TICK_SECRET }}
+          DAYS: ${{ inputs.days }}
+        run: |
+          if [ -z "$INGEST_URL" ] || [ -z "$INGEST_SECRET" ]; then
+            echo "::error::ANALYTICS_INGEST_URL and AUTOPILOT_TICK_SECRET repo secrets must be set."
+            exit 1
+          fi
+          url="$INGEST_URL"
+          if [ -n "$DAYS" ]; then
+            case "$DAYS" in
+              ''|*[!0-9]*) echo "::error::days must be a positive integer, got '$DAYS'."; exit 1 ;;
+            esac
+            url="${url}?days=${DAYS}"
+            echo "Backfilling ${DAYS} days"
+          fi
+          code=$(curl -s -o /tmp/ingest.out -w "%{http_code}" -X POST "$url" \
+            -H "Authorization: Bearer $INGEST_SECRET" \
+            -H "Content-Type: application/json" \
+            --max-time 60 || echo "000")
+          echo "HTTP $code"
+          cat /tmp/ingest.out || true
+          echo ""
+          if [ "$code" != "200" ]; then
+            echo "::error::Analytics ingest trigger failed (HTTP $code)."
+            exit 1
+          fi

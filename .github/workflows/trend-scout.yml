@@ -1,0 +1,52 @@
+name: Trend Scout
+
+# Sweeps Hacker News, the site's own rising Search Console queries, and the
+# Google Trends daily feed; gates each signal against the brand vocabulary and
+# stores what survives for the ideator to build topics from.
+#
+# Every 4 hours, which is a deliberate middle. A newsjackable story has a window
+# of roughly 72 hours — the Sarvam post earned its traffic because it went out
+# while the story was still forming — so a daily sweep would routinely miss a
+# third of that window. Hourly would mostly re-fetch unchanged feeds: Search
+# Console only publishes once a day, and HN stories take hours to accumulate the
+# engagement the scoring depends on.
+#
+# Cheap either way: three HTTP fetches and deterministic scoring, no LLM calls.
+#
+# Required repo secrets:
+#   TREND_SCOUT_URL        e.g. https://<dashboard>.onrender.com/api/analytics/scout
+#   AUTOPILOT_TICK_SECRET  the same secret the other scheduled jobs use
+
+on:
+  schedule:
+    - cron: '25 */4 * * *'   # 06:55, 10:55, 14:55 ... IST
+  workflow_dispatch: {}
+
+concurrency:
+  group: trend-scout
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger trend sweep
+        env:
+          SCOUT_URL: ${{ secrets.TREND_SCOUT_URL }}
+          SCOUT_SECRET: ${{ secrets.AUTOPILOT_TICK_SECRET }}
+        run: |
+          if [ -z "$SCOUT_URL" ] || [ -z "$SCOUT_SECRET" ]; then
+            echo "::error::TREND_SCOUT_URL and AUTOPILOT_TICK_SECRET repo secrets must be set."
+            exit 1
+          fi
+          code=$(curl -s -o /tmp/scout.out -w "%{http_code}" -X POST "$SCOUT_URL" \
+            -H "Authorization: Bearer $SCOUT_SECRET" \
+            -H "Content-Type: application/json" \
+            --max-time 60 || echo "000")
+          echo "HTTP $code"
+          cat /tmp/scout.out || true
+          echo ""
+          if [ "$code" != "200" ]; then
+            echo "::error::Trend scout trigger failed (HTTP $code)."
+            exit 1
+          fi

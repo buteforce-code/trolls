@@ -21,6 +21,7 @@ Env knobs (all optional, with sane defaults):
 """
 from __future__ import annotations
 
+import gc
 import json
 import os
 from datetime import datetime, timedelta, timezone
@@ -115,6 +116,29 @@ def _next_slot(db: Any, gap: timedelta, now: datetime) -> datetime:
 
 
 def _pick_next_queued(db: Any) -> dict | None:
+    """The next topic to produce.
+
+    Asks the learning layer first. It answers only when the bandit is genuinely
+    active — enough matured posts *and* the explicit switch — so during shadow
+    mode this stays exactly the FIFO it always was. A learner that silently
+    reorders production from its third observation is reordering on its prior.
+    """
+    try:
+        from swarm.learning.engine import next_queued_slug
+
+        recommended = next_queued_slug(db)
+    except Exception:
+        # The learning layer is an optimisation, never a dependency. If it is
+        # broken or its tables are missing, publishing must carry on regardless.
+        recommended = None
+
+    if recommended:
+        rows = (db.table("topics").select("id,slug,title,tags")
+                .eq("slug", recommended).eq("status", "queued")
+                .limit(1).execute().data or [])
+        if rows:
+            return rows[0]
+
     rows = (db.table("topics").select("id,slug,title,tags")
             .eq("status", "queued").order("created_at", desc=False)
             .limit(1).execute().data or [])
@@ -240,10 +264,20 @@ def _refill(db: Any, orch: Any, batch: int, log: list[str]) -> int:
 
     log.append(f"queue empty — ideating {batch} new topics...")
     try:
-        ideas = run_ideation(model=orch.model, existing_titles=existing_titles, batch=batch)
+        ideas = run_ideation(model=orch.model, existing_titles=existing_titles,
+                             batch=batch, db=db)
     except Exception as exc:
         log.append(f"  ideation crashed: {exc}")
         return 0
+
+    # The run that produced these ideas, so a topic can be traced back to the
+    # exact ideation pass (and its cost) that invented it.
+    try:
+        from swarm.orchestrator import get_recorder
+
+        run_id = get_recorder().run_id
+    except Exception:
+        run_id = None
 
     now = _iso(_now())
     inserted = 0
@@ -251,6 +285,8 @@ def _refill(db: Any, orch: Any, batch: int, log: list[str]) -> int:
         slug = slugify(idea["title"])
         if not slug or slug in existing_slugs:
             continue
+        source = dict(idea.get("source") or {})
+        source["captured_at"] = now
         try:
             db.table("topics").insert({
                 "slug": slug,
@@ -259,6 +295,9 @@ def _refill(db: Any, orch: Any, batch: int, log: list[str]) -> int:
                 "tags": idea.get("tags") or [],
                 "brief": idea.get("brief") or "",
                 "target_keyword": idea.get("target_keyword") or "",
+                "source_kind": "ideator",
+                "source_detail": source,
+                "source_run_id": run_id,
                 "created_at": now,
                 "updated_at": now,
             }).execute()

@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type ReactNode } from 'react'
 import Link from 'next/link'
+import { fmtIST, relative } from '../../lib/datetime'
 
 // ── Types (mirror /api/stats) ──────────────────────────────────────────────
 type Day = { date: string; count: number }
@@ -25,16 +26,6 @@ const STATUS_LABEL: Record<string, string> = {
   publishing: 'Publishing', published: 'Published', cancelled: 'Cancelled', failed: 'Failed',
 }
 
-function fmtDate(iso: string | null): string {
-  if (!iso) return '—'
-  return new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
-}
-function until(iso: string): string {
-  const diff = new Date(iso).getTime() - Date.now()
-  if (diff <= 0) return 'now'
-  const h = Math.round(diff / 3.6e6)
-  return h < 48 ? `in ${h}h` : `in ${Math.round(h / 24)}d`
-}
 
 // ── Presentational bits ─────────────────────────────────────────────────────
 function StatCard({ label, value, accent, hint }: { label: string; value: string | number; accent?: string; hint?: string }) {
@@ -114,7 +105,7 @@ export default function StatsPage() {
           <div className="page-header-row">
             <div>
               <h1>Analytics</h1>
-              <p>Pipeline, content &amp; traffic{stats && <> · updated {fmtDate(stats.generatedAt)}</>}</p>
+              <p>Pipeline, content &amp; traffic{stats && <> · updated {fmtIST(stats.generatedAt)}</>}</p>
             </div>
             <Link href="/" className="btn btn-outline">← Topics</Link>
           </div>
@@ -129,7 +120,7 @@ export default function StatsPage() {
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 14, marginBottom: 18 }}>
               <StatCard label="Total views" value={stats.views.total.toLocaleString()} accent="var(--accent)" hint={`${stats.views.last7} last 7d · ${stats.views.last30} last 30d`} />
               <StatCard label="Published" value={stats.totals.published} accent="var(--green)" hint={`${stats.views.uniquePosts} posts with views`} />
-              <StatCard label="Scheduled" value={stats.totals.scheduled} accent="var(--accent)" hint={stats.cadence.nextPublishAt ? `next ${until(stats.cadence.nextPublishAt)}` : 'none queued'} />
+              <StatCard label="Scheduled" value={stats.totals.scheduled} accent="var(--accent)" hint={stats.cadence.nextPublishAt ? `next ${relative(stats.cadence.nextPublishAt)}` : 'none queued'} />
               <StatCard label="Queued" value={stats.totals.queued} hint="awaiting pipeline" />
               <StatCard label="Needs review" value={stats.totals.needsReview} accent={stats.totals.needsReview ? 'var(--amber)' : undefined} />
               <StatCard label="Failed" value={stats.totals.failed} accent={stats.totals.failed ? 'var(--red)' : undefined} />
@@ -146,7 +137,7 @@ export default function StatsPage() {
 
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 18 }}>
               {/* Publishing cadence */}
-              <Section title="Publishing cadence — last 30 days" right={stats.cadence.lastPublishedAt ? `last ${fmtDate(stats.cadence.lastPublishedAt)}` : 'none yet'}>
+              <Section title="Publishing cadence — last 30 days" right={stats.cadence.lastPublishedAt ? `last ${fmtIST(stats.cadence.lastPublishedAt)}` : 'none yet'}>
                 <BarChart data={stats.cadence.publishedByDay} color="var(--green)" />
               </Section>
 
@@ -200,7 +191,7 @@ export default function StatsPage() {
                 ) : stats.cadence.upcoming.slice(0, 12).map(u => (
                   <div key={u.slug} style={{ display: 'flex', justifyContent: 'space-between', gap: 10, padding: '6px 0', borderBottom: '1px solid var(--border)' }}>
                     <Link href={`/topic/${u.slug}`} style={{ fontSize: 13, flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{u.title}</Link>
-                    <span style={{ fontSize: 12, color: 'var(--accent)', fontWeight: 600 }}>{until(u.scheduled_for)}</span>
+                    <span style={{ fontSize: 12, color: 'var(--accent)', fontWeight: 600 }}>{relative(u.scheduled_for)}</span>
                   </div>
                 ))}
               </Section>

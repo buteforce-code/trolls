@@ -16,9 +16,13 @@ import { SESSION_COOKIE, verifySession, authConfig, allowUnconfigured } from './
  *   /api/autopilot/*      called by the GitHub Actions cron, which cannot hold a
  *                         browser session; those routes check a bearer secret
  *                         themselves
+ *   /api/analytics/*      same reason — the daily ingest cron authenticates with
+ *                         the same bearer secret inside the route
  */
 const PUBLIC_PATHS = new Set(['/login', '/api/login', '/api/logout'])
-const PUBLIC_PREFIXES = ['/api/track', '/api/autopilot/', '/brand/', '/_next/', '/favicon']
+const PUBLIC_PREFIXES = [
+  '/api/track', '/api/autopilot/', '/api/analytics/', '/brand/', '/_next/', '/favicon',
+]
 
 function isPublic(pathname: string): boolean {
   if (PUBLIC_PATHS.has(pathname)) return true

@@ -26,7 +26,9 @@ export default function NavActions() {
     <div className="nav-actions">
       <a className={`nav-link${pathname === '/' ? ' is-active' : ''}`} href="/">Topics</a>
       <a className={`nav-link${pathname.startsWith('/swarm') ? ' is-active' : ''}`} href="/swarm">Swarm</a>
-      <a className={`nav-link${pathname.startsWith('/stats') ? ' is-active' : ''}`} href="/stats">Analytics</a>
+      <a className={`nav-link${pathname.startsWith('/stats') ? ' is-active' : ''}`} href="/stats">Pipeline</a>
+      <a className={`nav-link${pathname.startsWith('/performance') ? ' is-active' : ''}`} href="/performance">Performance</a>
+      <a className={`nav-link${pathname.startsWith('/learning') ? ' is-active' : ''}`} href="/learning">Learning</a>
       <button className="nav-link nav-signout" onClick={signOut} type="button">Sign out</button>
     </div>
   )

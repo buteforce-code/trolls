@@ -31,6 +31,9 @@ interface ViewInput {
   referrer: string | null
   ua: string | null
   session: string | null
+  event?: unknown
+  scrollDepth?: unknown
+  label?: unknown
 }
 
 const clean = (v: unknown): string | null =>
@@ -47,8 +50,27 @@ const validPath = (v: unknown): string | null => {
   return s && PATH_RE.test(s) ? s : null
 }
 
+// Engagement events, closed set. Anything else is recorded as a plain view
+// rather than rejected — a mislabelled event is still a real reader, and a
+// client-side typo should not silently cost a datapoint.
+const EVENTS = new Set(['view', 'scroll', 'cta'])
+const SCROLL_MILESTONES = new Set([25, 50, 75, 100])
+
+const validEvent = (v: unknown): string => {
+  const s = typeof v === 'string' ? v.trim().toLowerCase() : ''
+  return EVENTS.has(s) ? s : 'view'
+}
+
+/** Only the four milestones are stored. Accepting arbitrary percentages would
+ *  let a client write unbounded values and turn a depth signal into noise. */
+const validScroll = (v: unknown): number | null => {
+  const n = typeof v === 'number' ? v : parseInt(String(v ?? ''), 10)
+  return SCROLL_MILESTONES.has(n) ? n : null
+}
+
 async function record(input: ViewInput): Promise<boolean> {
   if (!input.slug) return false
+  const event = validEvent(input.event)
   const { error } = await supabaseAdmin.from('blog_views').insert({
     slug: input.slug,
     path: input.path,
@@ -56,6 +78,11 @@ async function record(input: ViewInput): Promise<boolean> {
     ua: clientFamily(input.ua),
     session_id: await pseudonymise(input.session),
     expires_at: expiresAt(),
+    event,
+    scroll_depth: event === 'scroll' ? validScroll(input.scrollDepth) : null,
+    // Which CTA was clicked. Bounded and stripped of anything but a short label
+    // so a page cannot smuggle free text or PII through this field.
+    label: event === 'cta' ? (clean(input.label) || '').slice(0, 60) || null : null,
   })
   if (error) {
     console.error('[track] insert failed:', error.message)
@@ -88,6 +115,9 @@ export async function POST(request: Request): Promise<NextResponse> {
     referrer: clean(body.referrer) || clean(request.headers.get('referer')),
     ua: clean(request.headers.get('user-agent')),
     session: clean(body.session),
+    event: body.event,
+    scrollDepth: body.scrollDepth,
+    label: body.label,
   })
   return NextResponse.json({ ok }, { status: ok ? 200 : 400, headers: CORS })
 }

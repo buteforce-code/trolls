@@ -110,6 +110,20 @@ services:
       - key: AUTOPILOT_MAX_PRODUCE_PER_TICK
         value: "1"
       # Shared secret the GitHub Actions cron sends as a Bearer token. Set this to
-      # the same value as the AUTOPILOT_TICK_SECRET repo secret in GitHub.
+      # the same value as the AUTOPILOT_TICK_SECRET repo secret in GitHub. Also
+      # authenticates the daily analytics ingest.
       - key: AUTOPILOT_TICK_SECRET
         sync: false
+      # ── Analytics (the feedback loop) ─────────────────────────────────────
+      # Search Console property identifier. Domain properties are
+      # "sc-domain:buteforce.com"; URL-prefix properties are the full prefix
+      # including scheme, www and trailing slash. The wrong shape returns zero
+      # rows rather than an error, so verify with `run.py --check-analytics`.
+      - key: GSC_SITE_URL
+        value: "sc-domain:buteforce.com"
+      # Numeric GA4 property ID, NOT the G-XXXXXXX measurement ID.
+      - key: GA4_PROPERTY_ID
+        value: "531283917"
+      # Trailing window re-pulled each night; GSC revises the last 2-3 days.
+      - key: ANALYTICS_INGEST_DAYS
+        value: "7"

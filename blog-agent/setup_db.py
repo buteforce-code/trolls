@@ -95,6 +95,21 @@ STATEMENTS = [
     # a promise in a policy document. purge_expired_views() below does the work.
     "ALTER TABLE blog_views ADD COLUMN IF NOT EXISTS expires_at timestamptz",
     "CREATE INDEX IF NOT EXISTS blog_views_expires_idx ON blog_views (expires_at)",
+
+    # ── Engagement events ────────────────────────────────────────────────────
+    # GA4 reports engagement as a session-level rate, which cannot answer "did
+    # anyone reach the CTA on *this* post?". These two columns turn blog_views
+    # from a pageview counter into a depth signal the learning layer can use.
+    #
+    #   event         'view' | 'scroll' | 'cta'
+    #   scroll_depth  25 | 50 | 75 | 100 — milestone reached, for 'scroll' events
+    #
+    # Defaulting event to 'view' keeps every existing row and the existing pixel
+    # working unchanged.
+    "ALTER TABLE blog_views ADD COLUMN IF NOT EXISTS event text DEFAULT 'view'",
+    "ALTER TABLE blog_views ADD COLUMN IF NOT EXISTS scroll_depth int",
+    "ALTER TABLE blog_views ADD COLUMN IF NOT EXISTS label text",
+    "CREATE INDEX IF NOT EXISTS blog_views_event_idx ON blog_views (event, slug)",
     """
     CREATE OR REPLACE FUNCTION purge_expired_views() RETURNS integer AS $$
     DECLARE removed integer;
@@ -160,6 +175,197 @@ STATEMENTS = [
     "ALTER TABLE blog_posts ENABLE ROW LEVEL SECURITY",
     "DROP POLICY IF EXISTS anon_read_topics ON topics",
     "DROP POLICY IF EXISTS anon_read_blog_posts ON blog_posts",
+
+    # ── Topic provenance ─────────────────────────────────────────────────────
+    # Where an idea came from. Without this the engine can measure that a post
+    # performed but never learn *what kind of sourcing* produced it — which is
+    # the only question the learning loop actually needs answered.
+    #
+    #   source_kind   'human' | 'roadmap_seed' | 'ideator' | 'trend_scout' | 'gsc_gap'
+    #   source_detail {platform, url, author, captured_at, signal_text, why_now, ...}
+    #   source_run_id the agent_run that produced the idea (null for human/seeded)
+    "ALTER TABLE topics ADD COLUMN IF NOT EXISTS source_kind text",
+    "ALTER TABLE topics ADD COLUMN IF NOT EXISTS source_detail jsonb DEFAULT '{}'",
+    "ALTER TABLE topics ADD COLUMN IF NOT EXISTS source_run_id uuid",
+    "CREATE INDEX IF NOT EXISTS topics_source_kind_idx ON topics (source_kind)",
+
+    # ── Search + engagement metrics, one row per (day, post, source) ─────────
+    # Populated by `python run.py --ingest-analytics` from the Search Console API
+    # and the GA4 Data API. Deliberately wide with nullable per-source columns:
+    # GSC has no notion of engagement and GA4 has none of rank, so a single
+    # narrow key/value table would just push that sparsity into every query.
+    #
+    # PK (date, slug, source) makes ingestion idempotent — the ingester re-pulls
+    # a trailing window every run because GSC finalises data 2-3 days late, and
+    # re-pulling must correct rows rather than duplicate them.
+    """
+    CREATE TABLE IF NOT EXISTS post_metrics_daily (
+        date             date NOT NULL,
+        slug             text NOT NULL,
+        source           text NOT NULL,
+        impressions      int,
+        clicks           int,
+        ctr              numeric(8,6),
+        position         numeric(6,2),
+        views            int,
+        users            int,
+        engaged_seconds  numeric(12,2),
+        engagement_rate  numeric(8,6),
+        fetched_at       timestamptz DEFAULT now(),
+        PRIMARY KEY (date, slug, source)
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS post_metrics_slug_date_idx ON post_metrics_daily (slug, date DESC)",
+    "CREATE INDEX IF NOT EXISTS post_metrics_date_idx ON post_metrics_daily (date DESC)",
+
+    # What each post actually ranks for, per day. The gap between this and the
+    # topic's `target_keyword` is the single most actionable signal the engine
+    # has: it shows where intent and reality diverged.
+    """
+    CREATE TABLE IF NOT EXISTS post_queries_daily (
+        date         date NOT NULL,
+        slug         text NOT NULL,
+        query        text NOT NULL,
+        impressions  int,
+        clicks       int,
+        ctr          numeric(8,6),
+        position     numeric(6,2),
+        fetched_at   timestamptz DEFAULT now(),
+        PRIMARY KEY (date, slug, query)
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS post_queries_slug_date_idx ON post_queries_daily (slug, date DESC)",
+    "CREATE INDEX IF NOT EXISTS post_queries_query_idx ON post_queries_daily (query)",
+
+    # Same lockdown as everything else: RLS on, no policy = deny. The dashboard
+    # reads these through server-side routes holding the service key.
+    "ALTER TABLE post_metrics_daily ENABLE ROW LEVEL SECURITY",
+    "ALTER TABLE post_queries_daily ENABLE ROW LEVEL SECURITY",
+
+    # ── Learning layer ───────────────────────────────────────────────────────
+    # Computed in Python (swarm/learning/) and read by the dashboard, rather than
+    # recomputed in TypeScript for display. The same numbers rank the production
+    # queue and appear on screen, so what you see is what the engine used.
+    #
+    # One row per scored post. `components` holds each term's contribution so the
+    # dashboard can show *why* a post scored what it did instead of a bare number.
+    """
+    CREATE TABLE IF NOT EXISTS post_scores (
+        slug             text PRIMARY KEY,
+        computed_at      timestamptz DEFAULT now(),
+        window_days      int,
+        age_days         int,
+        matured          boolean DEFAULT false,
+        impressions      int, clicks int,
+        ctr              numeric(8,6), position numeric(6,2),
+        views            int, engagement_rate numeric(8,6),
+        outcome_score    numeric(10,4),
+        success          boolean,
+        components       jsonb DEFAULT '{}',
+        cluster          text, source_kind text, source_platform text
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS post_scores_score_idx ON post_scores (outcome_score DESC)",
+
+    # Thompson Sampling posterior per arm, arm = cluster × source platform.
+    # Beta-Bernoulli with an empirical-Bayes prior, so an arm holding one
+    # observation stays visibly uncertain instead of reporting 100% or 0%.
+    """
+    CREATE TABLE IF NOT EXISTS bandit_arms (
+        arm              text PRIMARY KEY,
+        cluster          text,
+        source_platform  text,
+        alpha            numeric(10,4),
+        beta             numeric(10,4),
+        trials           numeric(10,4),
+        successes        numeric(10,4),
+        mean             numeric(8,6),
+        ci_low           numeric(8,6),
+        ci_high          numeric(8,6),
+        density          jsonb DEFAULT '[]',
+        updated_at       timestamptz DEFAULT now()
+    )
+    """,
+
+    # Every ranking decision, including the ones not acted on. The audit trail
+    # that makes the learning layer inspectable rather than a black box.
+    """
+    CREATE TABLE IF NOT EXISTS topic_decisions (
+        id           bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        at           timestamptz DEFAULT now(),
+        slug         text NOT NULL,
+        arm          text,
+        mode         text,
+        rank         int,
+        l1_score     numeric(10,4),
+        sampled      numeric(8,6),
+        explanation  jsonb DEFAULT '{}',
+        applied      boolean DEFAULT false
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS topic_decisions_at_idx ON topic_decisions (at DESC)",
+
+    # One row per learning run: how much data it saw, and how well its previous
+    # beliefs matched what actually happened.
+    """
+    CREATE TABLE IF NOT EXISTS learning_snapshots (
+        id            bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        at            timestamptz DEFAULT now(),
+        posts_scored  int,
+        posts_matured int,
+        arms          int,
+        global_rate   numeric(8,6),
+        calibration   jsonb DEFAULT '{}',
+        config        jsonb DEFAULT '{}'
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS learning_snapshots_at_idx ON learning_snapshots (at DESC)",
+
+    "ALTER TABLE post_scores ENABLE ROW LEVEL SECURITY",
+    "ALTER TABLE bandit_arms ENABLE ROW LEVEL SECURITY",
+    "ALTER TABLE topic_decisions ENABLE ROW LEVEL SECURITY",
+    "ALTER TABLE learning_snapshots ENABLE ROW LEVEL SECURITY",
+
+    # ── Trend scout ──────────────────────────────────────────────────────────
+    # Raw signals swept from outside sources, scored and gated before any of them
+    # is allowed to become a topic. Stored even when rejected: knowing what the
+    # scout saw and declined is how you tell "nothing was happening" from "the
+    # relevance gate is too tight".
+    #
+    # `fingerprint` is a stable hash of the source + canonical title, so the same
+    # story resurfacing on the next sweep updates its row rather than creating a
+    # duplicate that would double-count as evidence.
+    """
+    CREATE TABLE IF NOT EXISTS scout_signals (
+        fingerprint   text PRIMARY KEY,
+        source        text NOT NULL,
+        platform      text,
+        geo           text,
+        title         text NOT NULL,
+        url           text,
+        summary       text,
+        engagement    numeric(12,2),
+        first_seen    timestamptz DEFAULT now(),
+        last_seen     timestamptz DEFAULT now(),
+        published_at  timestamptz,
+        relevance     numeric(6,4),
+        score         numeric(10,4),
+        components    jsonb DEFAULT '{}',
+        cluster       text,
+        status        text NOT NULL DEFAULT 'new',
+        reject_reason text,
+        topic_slug    text,
+        raw           jsonb DEFAULT '{}'
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS scout_signals_score_idx ON scout_signals (score DESC)",
+    "CREATE INDEX IF NOT EXISTS scout_signals_status_idx ON scout_signals (status, last_seen DESC)",
+    "ALTER TABLE scout_signals ENABLE ROW LEVEL SECURITY",
+
+    # Which format a post was written in, so the learner can compare structures
+    # and not only subjects. Backfilled by classifying existing drafts.
+    "ALTER TABLE topics ADD COLUMN IF NOT EXISTS content_format text",
+    "ALTER TABLE post_scores ADD COLUMN IF NOT EXISTS content_format text",
 ]
 
 
