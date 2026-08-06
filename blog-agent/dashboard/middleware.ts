@@ -18,10 +18,15 @@ import { SESSION_COOKIE, verifySession, authConfig, allowUnconfigured } from './
  *                         themselves
  *   /api/analytics/*      same reason — the daily ingest cron authenticates with
  *                         the same bearer secret inside the route
+ *   /api/privacy/*        the retention purge cron, likewise
+ *
+ * Every one of these checks a bearer secret inside its own handler. Adding a
+ * prefix here without that check would publish the route.
  */
 const PUBLIC_PATHS = new Set(['/login', '/api/login', '/api/logout'])
 const PUBLIC_PREFIXES = [
-  '/api/track', '/api/autopilot/', '/api/analytics/', '/brand/', '/_next/', '/favicon',
+  '/api/track', '/api/autopilot/', '/api/analytics/', '/api/privacy/',
+  '/brand/', '/_next/', '/favicon',
 ]
 
 function isPublic(pathname: string): boolean {
