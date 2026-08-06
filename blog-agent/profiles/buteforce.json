@@ -1,0 +1,79 @@
+{
+  "slug": "buteforce",
+  "name": "Buteforce",
+  "legal_name": "Buteforce AI",
+  "tagline": "Bridging Business and AI",
+  "site_url": "https://www.buteforce.com",
+  "internal_hosts": ["buteforce.com", "www.buteforce.com"],
+
+  "author_name": "Dhyaneshwaran",
+  "author_id": "https://buteforce.com/#founder",
+  "author_url": "https://www.linkedin.com/in/dhyankarthik/",
+  "author_job_title": "Founder & AI Architect",
+  "logo_url": "https://www.buteforce.com/buteforce-wordmark.svg",
+  "content_locale": "en-IN",
+
+  "do_not_name": ["EasyBali"],
+
+  "proof_points": [
+    {
+      "label": "99.2% vision accuracy",
+      "pattern": "99\\.2\\s*%",
+      "source": "case_studies.md Case Study 1 — Computer Vision, Manufacturing QC"
+    },
+    {
+      "label": "94% error reduction",
+      "pattern": "\\b94\\s*%",
+      "source": "case_studies.md Case Study 1 — QC errors, first month"
+    },
+    {
+      "label": "120 items/min throughput",
+      "pattern": "(?i)\\b120\\s*(?:items?|packs?|units?|products?|parts?)?\\s*(?:(?:/|per\\s+|a\\s+)\\s*min(?:ute)?s?\\b|(?:CPM|PPM)\\b)",
+      "source": "case_studies.md Case Study 1 — 120 items/minute processed"
+    },
+    {
+      "label": "70% handled autonomously",
+      "pattern": "\\b70\\s*%",
+      "source": "case_studies.md Case Study 3 — AI Agent, Real Estate"
+    },
+    {
+      "label": "80% average time saved",
+      "pattern": "\\b80\\s*%",
+      "source": "case_studies.md Proof Points Summary — across projects"
+    },
+    {
+      "label": "95% faster lead response",
+      "pattern": "\\b95\\s*%",
+      "source": "case_studies.md Case Study 3 — lead response time"
+    },
+    {
+      "label": "sub-second document latency",
+      "pattern": "(?i)sub-?second|<\\s*1\\s*s(?:ec(?:ond)?)?\\b",
+      "source": "case_studies.md Case Study 2 — Document AI OCR pipeline, <1s"
+    }
+  ],
+
+  "competitors": [
+    "Cognex", "Keyence", "Omron", "OMRON", "Landing AI", "SwitchOn", "Instrumental",
+    "Matroid", "Maddox.ai", "Overview.ai", "Siemens", "NVIDIA",
+    "Kritikal Solutions", "XIS.ai", "Jidoka", "Detect Technologies", "Assert AI",
+    "Wobot.ai", "Intello Labs", "ParallelDots", "Cogniphi", "Attentive.ai", "SoftmaxAI",
+    "Optomech", "Indus Vision", "iFactory", "Binary Semantics", "ImageVision.ai",
+
+    "Softlabs", "Quytech", "Kody Technolab", "Flexsin", "CreateBytes", "NextBrain",
+
+    "Nanonets", "Rossum", "Rillion", "Medius", "Tipalti", "KlearStack", "DocXtract",
+    "Turian", "Flowis", "Google Document AI", "Azure Document Intelligence",
+    "AWS Textract", "Amazon Textract", "Tesseract", "ABBYY", "Mistral OCR",
+
+    "Crescendo", "ManyChat", "Botpress", "ORAI", "JoyzAI", "RealtyChatbot",
+    "VoiceGenie", "Aloware", "MindStudio", "Lindy", "Intuz",
+
+    "UiPath", "Automation Anywhere", "Zapier", "Make.com", "n8n",
+    "Accenture", "Infosys", "TCS", "Wipro", "LeewayHertz", "Appinventiv",
+
+    "Claude Code", "Codex", "Sarvam Code", "GitHub Copilot", "Cursor", "Windsurf",
+    "Devin", "Replit Agent", "Codeium", "Amazon Q Developer", "Tabnine", "Aider",
+    "Cline", "Google Jules"
+  ]
+}

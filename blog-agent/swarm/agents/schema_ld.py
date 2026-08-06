@@ -20,17 +20,31 @@ import re
 from datetime import datetime, timezone
 from typing import Any, Callable
 
-from swarm.geo import AUTHOR_NAME
+from swarm import brand
 
-SITE = "https://www.buteforce.com"
-# One spelling of the founder, everywhere. This said "Dhyan Karthik" while the live site's
-# rendered byline and Article JSON-LD said "Dhyaneshwaran" — two people, as far as a knowledge
-# graph is concerned. AI Visibility SCAN 001 found an entity gap was the root cause of 0/18
-# citations, so a split author name is not cosmetic.
-AUTHOR = AUTHOR_NAME
-AUTHOR_ID = "https://buteforce.com/#founder"
-AUTHOR_URL = "https://www.linkedin.com/in/dhyankarthik/"
-ORG = "Buteforce"
+# The entity this markup asserts is per-tenant, and it is the highest-stakes thing the swarm
+# emits: AI Visibility SCAN 001 found an entity gap — not a content gap — was the root cause of
+# 0/18 citations. One spelling of the author everywhere, or a knowledge graph sees two people.
+# (This module once said "Dhyan Karthik" while the live site rendered "Dhyaneshwaran".) Those
+# values now come from the active `BrandProfile`, so a second tenant asserts its own entity
+# rather than inheriting ours.
+#
+# Module-level `SITE` / `AUTHOR` / `AUTHOR_ID` / `AUTHOR_URL` / `ORG` still resolve, lazily,
+# for any caller that reads them.
+_PROFILE_BACKED: dict[str, str] = {
+    "SITE": "site_url",
+    "AUTHOR": "author_name",
+    "AUTHOR_ID": "author_id",
+    "AUTHOR_URL": "author_url",
+    "ORG": "name",
+}
+
+
+def __getattr__(name: str):
+    path = _PROFILE_BACKED.get(name)
+    if path is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    return getattr(brand.active(), path)
 
 
 def _parse_frontmatter(mdx: str) -> dict:
@@ -130,29 +144,33 @@ def _article_node(
     *, slug: str, title: str, description: str, date: str, date_modified: str,
     tags: list[str], hero_image_url: str,
 ) -> dict:
+    p = brand.active()
+    site = p.site_url.rstrip("/")
+
+    author: dict[str, Any] = {"@type": "Person", "name": p.author_name}
+    if p.author_id:
+        author["@id"] = p.author_id
+    if p.author_job_title:
+        author["jobTitle"] = p.author_job_title
+    if p.author_url:
+        author["url"] = p.author_url
+    author["worksFor"] = {"@type": "Organization", "name": p.name, "url": site}
+
+    publisher: dict[str, Any] = {"@type": "Organization", "name": p.name, "url": site}
+    if p.logo_url:
+        publisher["logo"] = {"@type": "ImageObject", "url": p.logo_url}
+
     node: dict[str, Any] = {
         "@type": "BlogPosting",
         "headline": title[:110],
         "description": description,
         "datePublished": date,
         "dateModified": date_modified or date,
-        "author": {
-            "@type": "Person",
-            "@id": AUTHOR_ID,
-            "name": AUTHOR,
-            "jobTitle": "Founder & AI Architect",
-            "url": AUTHOR_URL,
-            "worksFor": {"@type": "Organization", "name": ORG, "url": SITE},
-        },
-        "publisher": {
-            "@type": "Organization",
-            "name": ORG,
-            "url": SITE,
-            "logo": {"@type": "ImageObject", "url": f"{SITE}/buteforce-wordmark.svg"},
-        },
-        "mainEntityOfPage": {"@type": "WebPage", "@id": f"{SITE}/blog/{slug}"},
-        "url": f"{SITE}/blog/{slug}",
-        "inLanguage": "en-IN",
+        "author": author,
+        "publisher": publisher,
+        "mainEntityOfPage": {"@type": "WebPage", "@id": f"{site}/blog/{slug}"},
+        "url": f"{site}/blog/{slug}",
+        "inLanguage": p.content_locale,
     }
     if hero_image_url:
         node["image"] = hero_image_url

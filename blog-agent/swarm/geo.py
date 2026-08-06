@@ -39,78 +39,54 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-# ── Canonical identity (must match the live site's rendered byline + JSON-LD) ──────────────
-# app/blog/[slug]/page.tsx renders "Dhyaneshwaran" with @id https://buteforce.com/#founder.
-# One spelling everywhere or the entity splits — the exact failure SCAN 001 measured.
-AUTHOR_NAME = "Dhyaneshwaran"
+from swarm import brand
+from swarm.brand import BrandProfile
 
-# ── Requirement 1: question-form H2 + self-contained answer ───────────────────────────────
-MIN_QUESTION_H2 = 2
-ANSWER_MIN_WORDS = 40
-ANSWER_MAX_WORDS = 160
-
-# ── Requirement 2: hard numbers, never adjectives ─────────────────────────────────────────
-# Source: .agents/knowledge/case_studies.md "Proof Points Summary". Never round these.
-PROOF_NUMBERS: dict[str, re.Pattern[str]] = {
-    "99.2% vision accuracy": re.compile(r"99\.2\s*%"),
-    "94% error reduction": re.compile(r"\b94\s*%"),
-    "120 items/min throughput": re.compile(
-        r"\b120\s*(?:items?|packs?|units?|products?|parts?)?\s*"
-        r"(?:(?:/|per\s+|a\s+)\s*min(?:ute)?s?\b|(?:CPM|PPM)\b)",
-        re.I,
-    ),
-    "70% handled autonomously": re.compile(r"\b70\s*%"),
-    "80% average time saved": re.compile(r"\b80\s*%"),
-    "95% faster lead response": re.compile(r"\b95\s*%"),
-    "sub-second document latency": re.compile(r"sub-?second|<\s*1\s*s(?:ec(?:ond)?)?\b", re.I),
+# ── Where the brand-specific half now lives ───────────────────────────────────────────────
+# Identity, proof numbers, competitors and the gate thresholds used to be literals here, which
+# meant one deployment was one brand forever. They are now fields on a `BrandProfile`
+# (`swarm/brand.py`, `profiles/<slug>.json`), and every audit function takes the profile it is
+# judging against.
+#
+# The module-level names below (`AUTHOR_NAME`, `PROOF_NUMBERS`, `COMPETITORS`,
+# `BANNED_ADJECTIVES`, `MIN_*`, `ANSWER_*`) still resolve, via `__getattr__`, to the ACTIVE
+# profile's values — so existing callers and tests keep working unchanged. They are resolved
+# lazily on first access rather than at import, which keeps this module import-clean: importing
+# `geo` never touches disk, so a missing profile fails where it is used, not where it is
+# imported.
+_PROFILE_BACKED: dict[str, str] = {
+    "AUTHOR_NAME": "author_name",
+    "COMPETITORS": "competitors",
+    "BANNED_ADJECTIVES": "banned_adjectives",
+    "MIN_QUESTION_H2": "thresholds.min_question_h2",
+    "ANSWER_MIN_WORDS": "thresholds.answer_min_words",
+    "ANSWER_MAX_WORDS": "thresholds.answer_max_words",
+    "MIN_PROOF_NUMBERS": "thresholds.min_proof_numbers",
+    "MIN_COMPETITORS_IN_TABLE": "thresholds.min_competitors_in_table",
+    "MIN_TABLE_BODY_ROWS": "thresholds.min_table_body_rows",
+    "NOT_A_FIT_MIN_WORDS": "thresholds.not_a_fit_min_words",
 }
-MIN_PROOF_NUMBERS = 2
 
-# Adjectives that pretend to be evidence. Every one of these appeared in a shipped post.
-# Deliberately excludes words with a legitimate technical sense in this domain ("seamless"
-# seal, "robust" fixture) — the writer prompt handles those; this list is unambiguous puffery.
-BANNED_ADJECTIVES: tuple[str, ...] = (
-    "world-class", "cutting-edge", "cutting edge", "state-of-the-art", "best-in-class",
-    "revolutionary", "revolutionis", "revolutioniz", "game-chang", "game chang",
-    "transformative", "unparalleled", "groundbreaking", "industry-leading", "unmatched",
-    "paradigm shift", "seismic shift", "tectonic shift", "supercharge", "turbocharge",
-    "next-generation", "bleeding-edge",
-)
 
-# ── Requirement 3: competitor-inclusive comparison table ──────────────────────────────────
-# Named vendors AI already recommends for our frozen prompts (SCAN 001 per-prompt results) plus
-# the FMCG line-inspection players from config/gsc-signals.md. Naming real rivals honestly is
-# the point: a table that only contains "us vs. generic alternative" reads as a brochure.
-COMPETITORS: tuple[str, ...] = (
-    # Manufacturing / computer vision
-    "Cognex", "Keyence", "Omron", "OMRON", "Landing AI", "SwitchOn", "Instrumental",
-    "Matroid", "Maddox.ai", "Overview.ai", "Siemens", "NVIDIA",
-    "Kritikal Solutions", "XIS.ai", "Jidoka", "Detect Technologies", "Assert AI",
-    "Wobot.ai", "Intello Labs", "ParallelDots", "Cogniphi", "Attentive.ai", "SoftmaxAI",
-    "Optomech", "Indus Vision", "iFactory", "Binary Semantics", "ImageVision.ai",
-    # Indian dev shops that rank for our category
-    "Softlabs", "Quytech", "Kody Technolab", "Flexsin", "CreateBytes", "NextBrain",
-    # Document AI / OCR
-    "Nanonets", "Rossum", "Rillion", "Medius", "Tipalti", "KlearStack", "DocXtract",
-    "Turian", "Flowis", "Google Document AI", "Azure Document Intelligence",
-    "AWS Textract", "Amazon Textract", "Tesseract", "ABBYY", "Mistral OCR",
-    # AI agents / real estate
-    "Crescendo", "ManyChat", "Botpress", "ORAI", "JoyzAI", "RealtyChatbot",
-    "VoiceGenie", "Aloware", "MindStudio", "Lindy", "Intuz",
-    # Automation / agency category
-    "UiPath", "Automation Anywhere", "Zapier", "Make.com", "n8n",
-    "Accenture", "Infosys", "TCS", "Wipro", "LeewayHertz", "Appinventiv",
-    # AI coding assistants / dev tools (2026-08-02: the ideator started news-jacking
-    # this category — e.g. Sarvam Code vs. Claude Code vs. Codex — and the gate had
-    # no vocabulary for it, blocking every post in the vertical on the first run)
-    "Claude Code", "Codex", "Sarvam Code", "GitHub Copilot", "Cursor", "Windsurf",
-    "Devin", "Replit Agent", "Codeium", "Amazon Q Developer", "Tabnine", "Aider",
-    "Cline", "Google Jules",
-)
-MIN_COMPETITORS_IN_TABLE = 2
-MIN_TABLE_BODY_ROWS = 3
+def __getattr__(name: str):
+    """Resolve legacy module constants from the active profile, on demand."""
+    if name == "GEO_TEMPLATE_RULES":
+        return template_rules()
+    if name == "PROOF_NUMBERS":
+        # Legacy shape: {label: compiled pattern}. Preserved for callers that introspect it.
+        return {p.label: p.regex for p in brand.active().proof_points}
+    path = _PROFILE_BACKED.get(name)
+    if path is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    value = brand.active()
+    for part in path.split("."):
+        value = getattr(value, part)
+    return value
+
 
 # ── Requirement 4: explicit disqualification ──────────────────────────────────────────────
+# Brand-independent: every company has situations where it is the wrong answer, and the
+# phrasings a writer reaches for to say so are the same in any category.
 NOT_A_FIT_HEADING = re.compile(
     r"not\s+a\s+fit|not\s+for\s+you|when\s+not\s+to|when\s+this\s+(?:doesn'?t|does\s+not)|"
     r"who\s+should\s*n[o']?t|wrong\s+fit|don'?t\s+(?:need|buy)|skip\s+this|"
@@ -264,21 +240,24 @@ class GeoReport:
         )
 
 
-def _audit_question_answers(sections: list[Section], report: GeoReport) -> None:
+def _audit_question_answers(
+    sections: list[Section], report: GeoReport, profile: BrandProfile
+) -> None:
+    t = profile.thresholds
     question_h2s = [s for s in sections if s.level == 2 and s.is_question]
     compliant = [
         s for s in question_h2s
-        if ANSWER_MIN_WORDS <= _word_count(s.first_paragraph) <= ANSWER_MAX_WORDS
+        if t.answer_min_words <= _word_count(s.first_paragraph) <= t.answer_max_words
     ]
     report.question_answers = len(compliant)
-    if len(compliant) >= MIN_QUESTION_H2:
+    if len(compliant) >= t.min_question_h2:
         return
 
     if not question_h2s:
         report.failures.append(
-            f"No question-form H2. Add at least {MIN_QUESTION_H2} H2 headings phrased as the "
+            f"No question-form H2. Add at least {t.min_question_h2} H2 headings phrased as the "
             "exact question a buyer would type or ask an AI assistant (they must end in '?'), "
-            f"each followed immediately by a self-contained {ANSWER_MIN_WORDS}-{ANSWER_MAX_WORDS} "
+            f"each followed immediately by a self-contained {t.answer_min_words}-{t.answer_max_words} "
             "word prose answer that makes sense quoted on its own, with no pronoun referring "
             "back to earlier text. Elaborate after that paragraph, not inside it."
         )
@@ -291,25 +270,24 @@ def _audit_question_answers(sections: list[Section], report: GeoReport) -> None:
     )
     report.failures.append(
         f"Only {len(compliant)} of {len(question_h2s)} question-form H2s carry a compliant "
-        f"{ANSWER_MIN_WORDS}-{ANSWER_MAX_WORDS} word answer directly underneath "
-        f"({MIN_QUESTION_H2} needed). Fix: {detail}. The answer must be the FIRST thing under "
+        f"{t.answer_min_words}-{t.answer_max_words} word answer directly underneath "
+        f"({t.min_question_h2} needed). Fix: {detail}. The answer must be the FIRST thing under "
         "the heading — prose, not a list or table — and self-contained."
     )
 
 
-def _audit_proof_numbers(body: str, report: GeoReport) -> None:
-    report.found_numbers = [name for name, pat in PROOF_NUMBERS.items() if pat.search(body)]
-    if len(report.found_numbers) < MIN_PROOF_NUMBERS:
+def _audit_proof_numbers(body: str, report: GeoReport, profile: BrandProfile) -> None:
+    report.found_numbers = profile.found_proof_points(body)
+    if len(report.found_numbers) < profile.thresholds.min_proof_numbers:
         report.failures.append(
             f"Only {len(report.found_numbers)} hard proof number(s) present "
-            f"({MIN_PROOF_NUMBERS} needed). Use the real, unrounded figures from Buteforce's "
-            "own delivered work — 99.2% classification accuracy, 120 items/min, 94% reduction "
-            "in QC errors, 70% of inquiries handled autonomously, 80% average time saved, "
-            "sub-second document latency — in the sections where they are genuinely relevant, "
-            "each attached to what produced it. Never invent a number and never round these."
+            f"({profile.thresholds.min_proof_numbers} needed). Use the real, unrounded figures "
+            f"from {profile.name}'s own delivered work — {', '.join(profile.proof_labels)} — in "
+            "the sections where they are genuinely relevant, each attached to what produced it. "
+            "Never invent a number and never round these."
         )
 
-    hits = sorted({b for b in BANNED_ADJECTIVES if b.lower() in body.lower()})
+    hits = sorted({b for b in profile.banned_adjectives if b.lower() in body.lower()})
     if hits:
         report.failures.append(
             f"Adjectives standing in for evidence: {', '.join(hits)}. Delete every one and put "
@@ -318,42 +296,44 @@ def _audit_proof_numbers(body: str, report: GeoReport) -> None:
         )
 
 
-def _audit_competitor_table(body: str, report: GeoReport) -> None:
+def _audit_competitor_table(body: str, report: GeoReport, profile: BrandProfile) -> None:
+    t = profile.thresholds
     tables = parse_tables(body)
     if not tables:
         report.failures.append(
             "No comparison table. Add one markdown table that compares the real options a buyer "
-            f"is actually choosing between — at least {MIN_COMPETITORS_IN_TABLE} named "
-            f"competitors (e.g. {', '.join(COMPETITORS[:4])}) alongside Buteforce, across "
-            f"{MIN_TABLE_BODY_ROWS}+ rows. Be accurate and fair about where they win; a table "
-            "that only flatters us gets read as a brochure and cited by nobody."
+            f"is actually choosing between — at least {t.min_competitors_in_table} named "
+            f"competitors (e.g. {', '.join(profile.competitors[:4])}) alongside {profile.name}, "
+            f"across {t.min_table_body_rows}+ rows. Be accurate and fair about where they win; a "
+            "table that only flatters us gets read as a brochure and cited by nobody."
         )
         return
 
     for table in tables:
-        named = {c for c in COMPETITORS if c.lower() in table.text.lower()}
-        if len(named) >= MIN_COMPETITORS_IN_TABLE and len(table.rows) >= MIN_TABLE_BODY_ROWS:
+        named = {c for c in profile.competitors if c.lower() in table.text.lower()}
+        if len(named) >= t.min_competitors_in_table and len(table.rows) >= t.min_table_body_rows:
             return
 
-    best = max(tables, key=lambda t: len(t.rows))
-    named = sorted({c for c in COMPETITORS if c.lower() in best.text.lower()})
+    best = max(tables, key=lambda tb: len(tb.rows))
+    named = sorted({c for c in profile.competitors if c.lower() in best.text.lower()})
     report.failures.append(
         f"The comparison table is not competitor-inclusive: its largest table has "
         f"{len(best.rows)} row(s) and names {len(named)} known competitor(s)"
         f"{' (' + ', '.join(named) + ')' if named else ''}. It needs "
-        f"{MIN_COMPETITORS_IN_TABLE}+ real named competitors across {MIN_TABLE_BODY_ROWS}+ rows, "
-        "with an honest column showing where each one is the better choice."
+        f"{t.min_competitors_in_table}+ real named competitors across {t.min_table_body_rows}+ "
+        "rows, with an honest column showing where each one is the better choice."
     )
 
 
-def _audit_not_a_fit(sections: list[Section], report: GeoReport) -> None:
+def _audit_not_a_fit(sections: list[Section], report: GeoReport, profile: BrandProfile) -> None:
+    minimum = profile.thresholds.not_a_fit_min_words
     for s in sections:
         if s.level in (2, 3) and NOT_A_FIT_HEADING.search(s.heading):
-            if _word_count(s.text) >= NOT_A_FIT_MIN_WORDS:
+            if _word_count(s.text) >= minimum:
                 return
             report.failures.append(
                 f'The "{s.heading}" section is only {_word_count(s.text)} words. Give it at '
-                f"least {NOT_A_FIT_MIN_WORDS}: name the specific situations where a buyer should "
+                f"least {minimum}: name the specific situations where a buyer should "
                 "not hire us, and say what they should do instead."
             )
             return
@@ -375,21 +355,32 @@ def _audit_metadata(frontmatter: str, report: GeoReport) -> None:
             )
 
 
-def audit(mdx: str) -> GeoReport:
-    """Verify one finished post against the GEO template. Pure function, no LLM, no I/O."""
+def audit(mdx: str, *, profile: BrandProfile | None = None) -> GeoReport:
+    """Verify one finished post against the GEO template, for one brand.
+
+    Pure function, no LLM. `profile` defaults to the active brand, so a single-tenant caller
+    passes only the MDX; a multi-tenant one passes the tenant's profile explicitly.
+    """
+    profile = profile or brand.active()
     frontmatter, body = split_frontmatter(mdx)
     sections = parse_sections(body)
     report = GeoReport()
-    _audit_question_answers(sections, report)
-    _audit_proof_numbers(body, report)
-    _audit_competitor_table(body, report)
-    _audit_not_a_fit(sections, report)
+    _audit_question_answers(sections, report, profile)
+    _audit_proof_numbers(body, report, profile)
+    _audit_competitor_table(body, report, profile)
+    _audit_not_a_fit(sections, report, profile)
     _audit_metadata(frontmatter, report)
     return report
 
 
 # ── Deterministic metadata injection (requirements 5 + 6) ─────────────────────────────────
-def inject_metadata(mdx: str, *, author: str = AUTHOR_NAME, date_modified: str = "") -> str:
+def inject_metadata(
+    mdx: str,
+    *,
+    author: str = "",
+    date_modified: str = "",
+    profile: BrandProfile | None = None,
+) -> str:
     """Set `author` and `dateModified` in the frontmatter. Idempotent.
 
     `dateModified` is always refreshed — that is the point of it. `author` is only added when
@@ -400,6 +391,7 @@ def inject_metadata(mdx: str, *, author: str = AUTHOR_NAME, date_modified: str =
     if not m:
         return mdx
     head, fm, close, body = m.groups()
+    author = author or (profile or brand.active()).author_name
     date_modified = date_modified or datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
     if re.search(r"(?m)^dateModified\s*:", fm):
@@ -414,9 +406,19 @@ def inject_metadata(mdx: str, *, author: str = AUTHOR_NAME, date_modified: str =
 
 
 # ── Prompt half — injected into the writer ────────────────────────────────────────────────
-_PROOF_LINE = " · ".join(PROOF_NUMBERS)
+def template_rules(profile: BrandProfile | None = None) -> str:
+    """The writer-facing half of the template, written for one brand.
 
-GEO_TEMPLATE_RULES = f"""
+    Derived from the SAME profile the gate reads, so the instructions and the enforcement
+    cannot drift apart — which is what happened when the proof numbers lived in markdown for
+    the prompt and in regexes for the gate.
+    """
+    p = profile or brand.active()
+    t = p.thresholds
+    proof_line = " · ".join(p.proof_labels)
+    rival_examples = ", ".join(p.competitors[:2]) if len(p.competitors) >= 2 else "a named rival"
+
+    return f"""
 === GEO TEMPLATE (NON-NEGOTIABLE — EVERY POST) ===
 This blog is written to be quoted by AI answer engines (ChatGPT, Perplexity, AI Overviews) as
 much as to rank on Google. Research is unambiguous: statistics, quotations and citations raise
@@ -424,36 +426,36 @@ AI visibility 30-40%; adjectives raise it zero. A deterministic gate checks all 
 following before anything publishes, and a failure blocks the post. Build them in as you write.
 
 1. QUESTION-FORM H2s WITH SELF-CONTAINED ANSWERS
-   At least {MIN_QUESTION_H2} of your H2 headings must be the exact question a buyer would type,
-   or ask an assistant, ending in "?". Directly under each, write ONE paragraph of
-   {ANSWER_MIN_WORDS}-{ANSWER_MAX_WORDS} words that fully answers it and still makes sense
+   At least {t.min_question_h2} of your H2 headings must be the exact question a buyer would
+   type, or ask an assistant, ending in "?". Directly under each, write ONE paragraph of
+   {t.answer_min_words}-{t.answer_max_words} words that fully answers it and still makes sense
    quoted alone on someone else's screen — name the subject, no "this", no "as we saw above".
    Then elaborate in the paragraphs after it. The answer paragraph must be prose: not a list,
    not a table.
 
 2. HARD NUMBERS, NEVER ADJECTIVES
-   Use at least {MIN_PROOF_NUMBERS} of Buteforce's real delivered figures where they genuinely
-   apply, each attached to what produced it: {_PROOF_LINE}.
-   Quote them exactly — never round 99.2% to "over 99%". Any performance claim without a
-   number gets cut. These words are banned outright: {', '.join(BANNED_ADJECTIVES[:12])}…
+   Use at least {t.min_proof_numbers} of {p.name}'s real delivered figures where they genuinely
+   apply, each attached to what produced it: {proof_line}.
+   Quote them exactly — never round. Any performance claim without a number gets cut. These
+   words are banned outright: {', '.join(p.banned_adjectives[:12])}…
    If you cannot attach a figure or a named mechanism to a claim, delete the claim.
 
 3. COMPETITOR-INCLUSIVE COMPARISON TABLE
    One markdown table comparing the options the buyer is really choosing between — at least
-   {MIN_COMPETITORS_IN_TABLE} named competitors alongside Buteforce, {MIN_TABLE_BODY_ROWS}+ rows.
-   Use the ACTUAL rival names already sitting in the research digest — its summary, key_facts
-   and what_people_say name the products this post is about. Put those exact names in the
-   table; do not paraphrase into a category ("a SaaS platform", "other AI tools") and do not
+   {t.min_competitors_in_table} named competitors alongside {p.name}, {t.min_table_body_rows}+
+   rows. Use the ACTUAL rival names already sitting in the research digest — its summary,
+   key_facts and what_people_say name the products this post is about. Put those exact names in
+   the table; do not paraphrase into a category ("a SaaS platform", "other AI tools") and do not
    invent a name the digest never mentioned. A gate checks the table against a fixed list of
    known vendors, so an invented or paraphrased name fails even when the row is accurate.
-   Include a column that says honestly where each rival is the better choice — e.g. Cognex and
-   Keyence beat us on off-the-shelf sensor reliability. A table that only flatters Buteforce is
+   Include a column that says honestly where each rival is the better choice — e.g.
+   {rival_examples} beat us on off-the-shelf reliability. A table that only flatters {p.name} is
    a brochure and gets cited by nobody.
 
 4. AN EXPLICIT "NOT A FIT IF…" SECTION
    One H2 that disqualifies readers by name: the volumes, budgets, timelines and problem shapes
-   where Buteforce is the wrong answer, and what they should do instead. At least
-   {NOT_A_FIT_MIN_WORDS} words. This is the highest-credibility block on the page — write it
+   where {p.name} is the wrong answer, and what they should do instead. At least
+   {t.not_a_fit_min_words} words. This is the highest-credibility block on the page — write it
    like you are talking someone out of a bad purchase, because you are.
 
 5 & 6. dateModified + named author are injected automatically after you write. Do not add them

@@ -17,11 +17,21 @@ from __future__ import annotations
 import re
 from urllib.parse import urlparse
 
+from swarm import brand
+
 # Inline markdown link, excluding image embeds (which are `![alt](src)`).
 _LINK_RE = re.compile(r"(?<!!)\[([^\]\[]+)\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
 _FRONTMATTER_RE = re.compile(r"\A(---\n.*?\n---\n)", re.DOTALL)
 
-_INTERNAL_HOSTS = {"buteforce.com", "www.buteforce.com"}
+
+def _internal_hosts() -> frozenset[str]:
+    """Hosts that count as this tenant's own, so a link to them is rewritten relative.
+
+    Derived from the active `BrandProfile` (which adds the `www.` twin automatically) rather
+    than hardcoded, so a second tenant does not treat buteforce.com as its own site — and,
+    worse, leave its own absolute URLs un-rewritten and paying a 308 on every crawl.
+    """
+    return brand.active().hosts
 
 # Static site paths the linker is allowed to target.
 KNOWN_PATHS = frozenset({
@@ -38,7 +48,7 @@ def _split_frontmatter(mdx: str) -> tuple[str, str]:
 def _to_relative(url: str) -> str:
     """Rewrite an absolute Buteforce URL to a site-relative path."""
     parsed = urlparse(url)
-    if parsed.netloc.lower() in _INTERNAL_HOSTS:
+    if parsed.netloc.lower() in _internal_hosts():
         path = parsed.path or "/"
         return f"{path}#{parsed.fragment}" if parsed.fragment else path
     return url
