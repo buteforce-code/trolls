@@ -1,3 +1,16 @@
+# ⚠️ THIS FILE IS DOCUMENTATION, NOT CONFIGURATION.
+#
+# The live `buteforce-blog-dashboard` service was created manually rather than
+# from this Blueprint, so Render does not re-read this file on deploy. Adding a
+# variable here changes NOTHING in production — it must also be set by hand in
+# Render → Environment, followed by "Save, rebuild, and deploy".
+#
+# Learned the expensive way on 2026-08-07: GSC_SITE_URL and GA4_PROPERTY_ID were
+# added here and were silently absent in production for hours. The symptom was
+# analytics ingestion reporting success while fetching nothing, which reads as a
+# credentials fault rather than a missing setting.
+#
+# Treat the list below as the required-variable checklist for the service.
 services:
   - type: web
     name: buteforce-blog-dashboard
