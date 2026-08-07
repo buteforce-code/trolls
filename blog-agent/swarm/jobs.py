@@ -31,10 +31,18 @@ def record(db: Any, job: str, lines: list[str], started_at: datetime,
     """
     log = "\n".join(str(line) for line in lines)[-MAX_LOG_CHARS:]
 
-    # A job is unsuccessful if it raised, or if any line marked itself failed.
-    # The ingest deliberately continues past a broken source rather than
-    # aborting, so its own log is the only place that failure is recorded.
-    failed_markers = ("! ", "FAILED", "ERROR", "NOT READY")
+    # A job is unsuccessful if it raised, if a line marked itself failed, or if a
+    # source was skipped for missing configuration.
+    #
+    # That last case is the one worth spelling out. The first server-side run
+    # recorded ok=True while logging "GSC_SITE_URL not set — skipped" and
+    # "GA4_PROPERTY_ID not set — skipped" — it had fetched nothing at all and
+    # still reported success, which is the exact failure this table was built to
+    # eliminate. A job that silently does nothing is not a job that worked.
+    #
+    # "no view events in window" is deliberately not in this list: an empty
+    # window is a real, correct answer, not a misconfiguration.
+    failed_markers = ("! ", "FAILED", "ERROR", "NOT READY", "not set")
     ok = error is None and not any(
         marker in line for line in lines for marker in failed_markers
     )
