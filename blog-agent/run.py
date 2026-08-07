@@ -102,35 +102,38 @@ def main():
 
     if args.ingest_analytics:
         from swarm.analytics.ingest import run_ingest
+        from swarm.jobs import run_and_record
         from swarm.learning.engine import run_learning
 
         db = _db()
-        for line in run_ingest(db, days=args.days):
-            print(line, flush=True)
+        run_and_record(db, "ingest-analytics", lambda: run_ingest(db, days=args.days))
 
         # Learn immediately after, in the same process. Chaining here rather than
         # as a second scheduled job guarantees the ordering: beliefs are always
         # derived from the data that was just fetched, never from yesterday's.
         # It is pure computation over stored rows, so it costs nothing extra.
         try:
-            for line in run_learning(db):
-                print(line, flush=True)
+            run_and_record(db, "learn", lambda: run_learning(db))
         except Exception as exc:
             print(f"[learning] FAILED after ingest: {exc}", flush=True)
         return
 
     # HTTP fetches plus deterministic scoring — no agents, no LLM calls.
     if args.scout:
+        from swarm.jobs import run_and_record
         from swarm.trends.scout import run_scout
-        for line in run_scout(_db()):
-            print(line, flush=True)
+
+        db = _db()
+        run_and_record(db, "scout", lambda: run_scout(db))
         return
 
     # Pure computation over already-stored metrics — no agents, no LLM calls.
     if args.learn:
+        from swarm.jobs import run_and_record
         from swarm.learning.engine import run_learning
-        for line in run_learning(_db()):
-            print(line, flush=True)
+
+        db = _db()
+        run_and_record(db, "learn", lambda: run_learning(db))
         return
 
     # Validate any slug before it reaches a database filter or a log path. The

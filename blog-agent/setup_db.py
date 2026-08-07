@@ -366,6 +366,25 @@ STATEMENTS = [
     # and not only subjects. Backfilled by classifying existing drafts.
     "ALTER TABLE topics ADD COLUMN IF NOT EXISTS content_format text",
     "ALTER TABLE post_scores ADD COLUMN IF NOT EXISTS content_format text",
+
+    # ── Background job outcomes ──────────────────────────────────────────────
+    # The cron endpoints spawn run.py and answer 200 as soon as it starts, so a
+    # job that dies immediately reports the same success as one that worked.
+    # Each job now records its own log here, which is the only place the outcome
+    # of a detached process on a remote host is actually visible.
+    """
+    CREATE TABLE IF NOT EXISTS job_runs (
+        id           bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        job          text NOT NULL,
+        started_at   timestamptz,
+        finished_at  timestamptz DEFAULT now(),
+        ok           boolean,
+        log          text,
+        error        text
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS job_runs_job_at_idx ON job_runs (job, finished_at DESC)",
+    "ALTER TABLE job_runs ENABLE ROW LEVEL SECURITY",
 ]
 
 
