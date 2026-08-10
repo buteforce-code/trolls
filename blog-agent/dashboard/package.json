@@ -9,7 +9,8 @@
     "remotion:render:sample": "node scripts/render-topic-video.mjs --out out/blog-promo-sample.mp4",
     "remotion:render:topic": "node scripts/render-topic-video.mjs",
     "prestart": "node scripts/write-gcp-creds.js",
-    "start": "next start -p 3005"
+    "start": "next start",
+    "start:local": "next start -p 3005"
   },
   "dependencies": {
     "@remotion/bundler": "^4.0.454",
