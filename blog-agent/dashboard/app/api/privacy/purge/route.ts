@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { supabaseAdmin } from '../../../../lib/supabase'
 import { retentionDays } from '../../../../lib/privacy'
-import { SESSION_COOKIE, verifySession, authConfig } from '../../../../lib/auth'
+import { SESSION_COOKIE, verifySession, authConfig, bearerMatches } from '../../../../lib/auth'
 
 export const dynamic = 'force-dynamic'
 
@@ -25,7 +25,7 @@ async function authorised(request: Request): Promise<boolean> {
   const header = request.headers.get('authorization') || ''
   if (header) {
     const secret = process.env.AUTOPILOT_TICK_SECRET || ''
-    return Boolean(secret) && header === `Bearer ${secret}`
+    return bearerMatches(header, secret)
   }
   const { secret, configured } = authConfig()
   if (!configured) return false

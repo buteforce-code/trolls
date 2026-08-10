@@ -40,10 +40,27 @@ function LoginForm() {
         setBusy(false)
         return
       }
-      // Only same-origin paths are accepted, so a crafted ?next=https://evil...
-      // cannot turn the login form into an open redirect.
+      // Only a same-origin, single-segment-rooted path is accepted.
+      // startsWith('/') alone is not enough: browsers (and Next's own
+      // client router, which resolves this href through the URL parser)
+      // strip embedded tab/CR/LF bytes while parsing a URL, so a value
+      // shaped like a slash, a raw tab, another slash, then evil.com reads
+      // as safe by that check alone but resolves to a protocol-relative
+      // double-slash address - an off-origin redirect. Walking the string
+      // and rejecting any ASCII control code point (0 through 31) or a
+      // literal backslash (code 92, which browsers also fold into a
+      // forward slash) closes that class of bypass.
       const next = params.get('next')
-      const safeNext = next && next.startsWith('/') && !next.startsWith('//') ? next : '/'
+      const BACKSLASH_CODE = 92
+      const isSafeNext = (value: string): boolean => {
+        if (!value.startsWith('/') || value.startsWith('//')) return false
+        for (let i = 0; i < value.length; i += 1) {
+          const code = value.charCodeAt(i)
+          if (code <= 31 || code === BACKSLASH_CODE) return false
+        }
+        return true
+      }
+      const safeNext = next && isSafeNext(next) ? next : '/'
       router.replace(safeNext)
       router.refresh()
     } catch {
@@ -54,27 +71,46 @@ function LoginForm() {
 
   return (
     <main className="login-wrap">
-      <form className="login-card" onSubmit={submit}>
-        <h1 className="login-title">Trolls</h1>
-        <p className="login-sub">Marketing agent swarm — operator sign-in</p>
+      <div className="aurora" style={{ width: 420, height: 300, left: '50%', top: '18%', marginLeft: -210 }} aria-hidden="true" />
 
-        <div className="field">
-          <label htmlFor="password">Password</label>
+      <form className="login-card rise" onSubmit={submit}>
+        <div className="row gap-12">
+          <span className="brand-mark" aria-hidden="true">
+            <img src="/brand/bf-mark.png" alt="" width={23} height={23} />
+          </span>
+          <span>
+            <h1 className="brand-name display" style={{ display: 'block', margin: 0 }}>Trolls</h1>
+            <span className="brand-sub">Agent village</span>
+          </span>
+        </div>
+
+        <p className="dialog-body">
+          Ten agents research, write and humanise; two deterministic gates decide what is
+          allowed to ship. Sign in to steer it.
+        </p>
+
+        <div>
+          <label className="field-label" htmlFor="password">Operator password</label>
           <input
             id="password"
+            className="input"
             type="password"
             value={password}
             autoFocus
             autoComplete="current-password"
             onChange={e => setPassword(e.target.value)}
-            placeholder="Operator password"
+            placeholder="••••••••••••"
+            aria-describedby={error ? 'login-error' : undefined}
+            aria-invalid={error ? true : undefined}
           />
         </div>
 
-        {error ? <p className="login-error" role="alert">{error}</p> : null}
+        {error && (
+          <p id="login-error" className="notice notice--rose t-base" role="alert">{error}</p>
+        )}
 
-        <button className="btn btn-primary" type="submit" disabled={busy || !password}>
-          {busy ? 'Signing in…' : 'Sign in'}
+        <button className="btn btn--primary btn--block" type="submit" disabled={busy || !password}>
+          {busy ? <><span className="spinner" /> Signing in…</> : 'Sign in'}
         </button>
       </form>
     </main>

@@ -1,213 +1,291 @@
 'use client'
 
-import { useEffect, useState, type ReactNode } from 'react'
 import Link from 'next/link'
-import { fmtIST, relative } from '../../lib/datetime'
+import { useEffect, useState } from 'react'
+import { clockTime, num, relative, untilShort } from '../../lib/format'
+import { PageHeader, EmptyState } from '../../components/ui/page-header'
+import { CadenceChart, CadenceLegend, type CadenceDay } from '../../components/ui/cadence-chart'
 
-// ── Types (mirror /api/stats) ──────────────────────────────────────────────
-type Day = { date: string; count: number }
-type Stats = {
+interface StatsPayload {
   generatedAt: string
-  totals: { topics: number; published: number; scheduled: number; queued: number; needsReview: number; failed: number; inProgress: number }
-  statusCounts: Record<string, number>
+  totals: {
+    topics: number; published: number; scheduled: number; queued: number
+    needsReview: number; failed: number; inProgress: number
+  }
   content: {
     posts: number; totalWords: number; avgWords: number | null; medianWords: number | null
     withHeroImage: number; withSchema: number; withSocial: number
     audited: number; avgAuditScore: number | null; avgConfidence: number | null
   }
-  cadence: { publishedByDay: Day[]; upcoming: { slug: string; title: string; scheduled_for: string }[]; lastPublishedAt: string | null; nextPublishAt: string | null }
-  views: { total: number; last7: number; last30: number; uniquePosts: number; byDay: Day[]; topPosts: { slug: string; title: string; views: number; published_url: string | null }[]; tracking: boolean }
+  cadence: {
+    publishedByDay: CadenceDay[]
+    upcoming: { slug: string; title: string; scheduled_for: string }[]
+    lastPublishedAt: string | null
+    nextPublishAt: string | null
+  }
+  views: {
+    total: number; last7: number; last30: number; uniquePosts: number
+    byDay: CadenceDay[]
+    topPosts: { slug: string; title: string; views: number; published_url: string | null }[]
+    tracking: boolean
+  }
   tags: { tag: string; count: number }[]
 }
 
-const STATUS_LABEL: Record<string, string> = {
-  queued: 'Queued', researching: 'Researching', verifying_research: 'Review research',
-  writing: 'Writing', verifying_draft: 'Review draft', scheduled: 'Scheduled',
-  publishing: 'Publishing', published: 'Published', cancelled: 'Cancelled', failed: 'Failed',
-}
-
-
-// ── Presentational bits ─────────────────────────────────────────────────────
-function StatCard({ label, value, accent, hint }: { label: string; value: string | number; accent?: string; hint?: string }) {
-  return (
-    <div className="card" style={{ padding: '16px 18px' }}>
-      <div style={{ fontSize: 12, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.4 }}>{label}</div>
-      <div style={{ fontSize: 30, fontWeight: 800, lineHeight: 1.1, marginTop: 6, color: accent || 'var(--text)' }}>{value}</div>
-      {hint && <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 4 }}>{hint}</div>}
-    </div>
-  )
-}
-
-function BarChart({ data, color = 'var(--accent)', unit = '' }: { data: Day[]; color?: string; unit?: string }) {
-  const max = Math.max(1, ...data.map(d => d.count))
-  return (
-    <div style={{ display: 'flex', alignItems: 'flex-end', gap: 3, height: 120, marginTop: 8 }}>
-      {data.map(d => (
-        <div key={d.date} title={`${d.date}: ${d.count}${unit}`} style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', height: '100%' }}>
-          <div style={{
-            height: `${(d.count / max) * 100}%`, minHeight: d.count > 0 ? 3 : 0,
-            background: color, borderRadius: 3, opacity: d.count > 0 ? 1 : 0.15,
-            transition: 'height .2s',
-          }} />
-        </div>
-      ))}
-    </div>
-  )
-}
-
-function Section({ title, children, right }: { title: string; children: ReactNode; right?: ReactNode }) {
-  return (
-    <div className="card" style={{ padding: 20, marginBottom: 18 }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 10 }}>
-        <h2 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>{title}</h2>
-        {right && <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{right}</span>}
-      </div>
-      {children}
-    </div>
-  )
-}
-
-function Meter({ label, value, total }: { label: string; value: number; total: number }) {
-  const pct = total > 0 ? Math.round((value / total) * 100) : 0
-  return (
-    <div style={{ marginBottom: 10 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 4 }}>
-        <span>{label}</span>
-        <span style={{ color: 'var(--text-muted)' }}>{value}/{total} · {pct}%</span>
-      </div>
-      <div style={{ height: 7, background: 'var(--bg-input)', borderRadius: 4, overflow: 'hidden' }}>
-        <div style={{ width: `${pct}%`, height: '100%', background: 'var(--accent)' }} />
-      </div>
-    </div>
-  )
-}
-
-// ── Page ─────────────────────────────────────────────────────────────────────
 export default function StatsPage() {
-  const [stats, setStats] = useState<Stats | null>(null)
-  const [error, setError] = useState('')
+  const [data, setData] = useState<StatsPayload | null>(null)
+  const [error, setError] = useState<string | null>(null)
 
+  // Deliberately a one-shot read with no polling. Nothing on this page changes
+  // faster than a post is published, and it is the most expensive query in the
+  // app — it reads every topic, post and view row.
   useEffect(() => {
     let cancelled = false
-    const load = () => fetch('/api/stats')
-      .then(r => r.json())
-      .then(d => { if (!cancelled) { d.error ? setError(d.error) : setStats(d) } })
-      .catch(e => !cancelled && setError(String(e)))
-    load()
-    const t = setInterval(load, 30000)
-    return () => { cancelled = true; clearInterval(t) }
+    fetch('/api/stats', { headers: { accept: 'application/json' } })
+      .then(async res => {
+        if (res.status === 401) { window.location.reload(); return null }
+        if (!res.ok) throw new Error(String(res.status))
+        return res.json()
+      })
+      .then(payload => { if (payload && !cancelled) setData(payload as StatsPayload) })
+      .catch(err => { if (!cancelled) setError(err instanceof Error ? err.message : 'failed') })
+    return () => { cancelled = true }
   }, [])
 
-  return (
-    <main>
-      <div className="container">
-        <div className="page-header">
-          <div className="page-header-row">
-            <div>
-              <h1>Analytics</h1>
-              <p>Pipeline, content &amp; traffic{stats && <> · updated {fmtIST(stats.generatedAt)}</>}</p>
-            </div>
-            <Link href="/" className="btn btn-outline">← Topics</Link>
-          </div>
+  if (error) {
+    return (
+      <>
+        <PageHeader title="Analytics" ambient={false} />
+        <p className="notice notice--rose" role="alert">Could not build the report: {error}</p>
+      </>
+    )
+  }
+
+  if (!data) {
+    return (
+      <div aria-busy="true" aria-live="polite">
+        <span className="sr-only">Building the report</span>
+        <div className="grid-stats mb-22">
+          {[0, 1, 2, 3].map(i => <div key={i} className="card card--tight" style={{ height: 120 }} />)}
         </div>
-
-        {error && <div className="card" style={{ padding: 16, color: 'var(--red)' }}>Failed to load stats: {error}</div>}
-        {!stats && !error && <div className="empty"><div className="empty-icon">⏳</div><h2>Loading analytics…</h2></div>}
-
-        {stats && (
-          <>
-            {/* KPI row */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 14, marginBottom: 18 }}>
-              <StatCard label="Total views" value={stats.views.total.toLocaleString()} accent="var(--accent)" hint={`${stats.views.last7} last 7d · ${stats.views.last30} last 30d`} />
-              <StatCard label="Published" value={stats.totals.published} accent="var(--green)" hint={`${stats.views.uniquePosts} posts with views`} />
-              <StatCard label="Scheduled" value={stats.totals.scheduled} accent="var(--accent)" hint={stats.cadence.nextPublishAt ? `next ${relative(stats.cadence.nextPublishAt)}` : 'none queued'} />
-              <StatCard label="Queued" value={stats.totals.queued} hint="awaiting pipeline" />
-              <StatCard label="Needs review" value={stats.totals.needsReview} accent={stats.totals.needsReview ? 'var(--amber)' : undefined} />
-              <StatCard label="Failed" value={stats.totals.failed} accent={stats.totals.failed ? 'var(--red)' : undefined} />
-            </div>
-
-            {/* Views over time */}
-            <Section title="Blog views — last 30 days" right={stats.views.tracking ? `${stats.views.total.toLocaleString()} total` : 'tracking not active yet'}>
-              {stats.views.total === 0 ? (
-                <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0 }}>
-                  No views recorded yet. Add the tracking snippet (see README “View tracking”) to the published blog template — counts appear here automatically.
-                </p>
-              ) : <BarChart data={stats.views.byDay} color="var(--accent)" />}
-            </Section>
-
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 18 }}>
-              {/* Publishing cadence */}
-              <Section title="Publishing cadence — last 30 days" right={stats.cadence.lastPublishedAt ? `last ${fmtIST(stats.cadence.lastPublishedAt)}` : 'none yet'}>
-                <BarChart data={stats.cadence.publishedByDay} color="var(--green)" />
-              </Section>
-
-              {/* Pipeline breakdown */}
-              <Section title="Pipeline status">
-                {Object.entries(stats.statusCounts).sort((a, b) => b[1] - a[1]).map(([s, n]) => (
-                  <div key={s} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '5px 0' }}>
-                    <span className={`badge badge-${s}`}>{STATUS_LABEL[s] ?? s}</span>
-                    <strong style={{ fontSize: 14 }}>{n}</strong>
-                  </div>
-                ))}
-              </Section>
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 18 }}>
-              {/* Top posts */}
-              <Section title="Top posts by views">
-                {stats.views.topPosts.length === 0 ? (
-                  <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0 }}>No view data yet.</p>
-                ) : stats.views.topPosts.map((p, i) => (
-                  <div key={p.slug} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 0', borderBottom: '1px solid var(--border)' }}>
-                    <span style={{ width: 20, color: 'var(--text-dim)', fontFamily: 'var(--mono)', fontSize: 12 }}>{i + 1}</span>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 13, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.title}</div>
-                      <Link href={`/topic/${p.slug}`} style={{ fontSize: 11, color: 'var(--text-muted)' }}>/{p.slug}</Link>
-                    </div>
-                    <strong style={{ color: 'var(--accent)' }}>{p.views.toLocaleString()}</strong>
-                  </div>
-                ))}
-              </Section>
-
-              {/* Content quality */}
-              <Section title="Content quality" right={`${stats.content.posts} posts`}>
-                <div style={{ display: 'flex', gap: 18, marginBottom: 14, flexWrap: 'wrap' }}>
-                  <div><div style={{ fontSize: 22, fontWeight: 800 }}>{stats.content.avgWords ?? '—'}</div><div style={{ fontSize: 11, color: 'var(--text-muted)' }}>avg words</div></div>
-                  <div><div style={{ fontSize: 22, fontWeight: 800 }}>{stats.content.avgAuditScore ?? '—'}</div><div style={{ fontSize: 11, color: 'var(--text-muted)' }}>avg audit score</div></div>
-                  <div><div style={{ fontSize: 22, fontWeight: 800 }}>{stats.content.avgConfidence ?? '—'}</div><div style={{ fontSize: 11, color: 'var(--text-muted)' }}>avg research conf.</div></div>
-                </div>
-                <Meter label="Hero image" value={stats.content.withHeroImage} total={stats.content.posts} />
-                <Meter label="JSON-LD schema" value={stats.content.withSchema} total={stats.content.posts} />
-                <Meter label="Social kit" value={stats.content.withSocial} total={stats.content.posts} />
-                <Meter label="Audited" value={stats.content.audited} total={stats.content.posts} />
-              </Section>
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 18 }}>
-              {/* Upcoming schedule */}
-              <Section title="Upcoming auto-publishes" right={`${stats.cadence.upcoming.length} scheduled`}>
-                {stats.cadence.upcoming.length === 0 ? (
-                  <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0 }}>Nothing scheduled.</p>
-                ) : stats.cadence.upcoming.slice(0, 12).map(u => (
-                  <div key={u.slug} style={{ display: 'flex', justifyContent: 'space-between', gap: 10, padding: '6px 0', borderBottom: '1px solid var(--border)' }}>
-                    <Link href={`/topic/${u.slug}`} style={{ fontSize: 13, flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{u.title}</Link>
-                    <span style={{ fontSize: 12, color: 'var(--accent)', fontWeight: 600 }}>{relative(u.scheduled_for)}</span>
-                  </div>
-                ))}
-              </Section>
-
-              {/* Tags */}
-              <Section title="Top tags">
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                  {stats.tags.map(t => (
-                    <span key={t.tag} className="tag">{t.tag} · {t.count}</span>
-                  ))}
-                </div>
-              </Section>
-            </div>
-          </>
-        )}
+        <div className="card" style={{ height: 300 }} />
       </div>
-    </main>
+    )
+  }
+
+  const { totals, content, cadence, views, tags } = data
+  const pct = (n: number) => (content.posts ? `${Math.round((n / content.posts) * 100)}%` : '—')
+
+  const quality: [string, string | number][] = [
+    ['Published posts', content.posts],
+    ['Total words', num(content.totalWords)],
+    ['Average word count', content.avgWords !== null ? num(Math.round(content.avgWords)) : '—'],
+    ['Median word count', content.medianWords !== null ? num(content.medianWords) : '—'],
+    ['With schema', pct(content.withSchema)],
+    ['With a social kit', pct(content.withSocial)],
+    ['With a hero image', pct(content.withHeroImage)],
+    ['Average audit score', content.avgAuditScore !== null ? `${content.avgAuditScore.toFixed(1)} / 100` : 'not scored yet'],
+    // The research agent has emitted confidence on both a 0–1 and a 0–100 scale
+    // across the corpus's lifetime. Rendering the raw number either way reads as
+    // a bug, so the scale is inferred and stated.
+    ['Average research confidence', content.avgConfidence === null
+      ? 'not recorded'
+      : content.avgConfidence <= 1
+        ? content.avgConfidence.toFixed(2)
+        : `${content.avgConfidence.toFixed(1)} / 100`],
+  ]
+
+  const totalCards: { label: string; value: number; tone: string }[] = [
+    { label: 'topics in play', value: totals.topics,      tone: 'var(--ink)' },
+    { label: 'published',      value: totals.published,   tone: 'var(--teal-ink)' },
+    { label: 'scheduled',      value: totals.scheduled,   tone: 'var(--lav-ink)' },
+    { label: 'needs review',   value: totals.needsReview + totals.failed, tone: 'var(--rose-ink)' },
+  ]
+
+  const tagMax = Math.max(1, ...tags.map(t => t.count))
+
+  return (
+    <div className="view-enter">
+      <PageHeader
+        title="Analytics"
+        subtitle={`Read-only · generated ${clockTime(data.generatedAt)}`}
+        ambient={false}
+      />
+
+      <div className="grid-stats mb-22">
+        {totalCards.map((card, i) => (
+          <div key={card.label} className="card card--tight rise" style={{ '--i': i } as React.CSSProperties}>
+            <p className="stat-value" style={{ fontSize: 34, color: card.tone }}>{card.value}</p>
+            <p className="t-base muted" style={{ marginTop: 11 }}>{card.label}</p>
+          </div>
+        ))}
+      </div>
+
+      <section className="card rise mb-22" style={{ '--i': 4 } as React.CSSProperties}>
+        <div className="row wrap gap-18" style={{ justifyContent: 'space-between', marginBottom: 20 }}>
+          <div>
+            <h2 className="section-title">Publishing cadence</h2>
+            <p className="section-note">
+              Last published {cadence.lastPublishedAt ? relative(cadence.lastPublishedAt) : '—'} ·
+              next {cadence.nextPublishAt ? untilShort(cadence.nextPublishAt) : '—'}
+            </p>
+          </div>
+          <CadenceLegend />
+        </div>
+        <CadenceChart days={cadence.publishedByDay} height={154} />
+      </section>
+
+      <div className="grid-halves mb-22">
+        <section className="card rise" style={{ '--i': 5 } as React.CSSProperties}>
+          <h2 className="section-title mb-18">Content quality</h2>
+          <dl>
+            {quality.map(([label, value]) => (
+              <div
+                key={label}
+                className="row"
+                style={{
+                  justifyContent: 'space-between',
+                  alignItems: 'baseline',
+                  padding: '11px 0',
+                  borderBottom: '1px solid var(--line-hair)',
+                }}
+              >
+                <dt className="t-base muted">{label}</dt>
+                <dd className="display" style={{ fontWeight: 600, fontSize: 15 }}>{value}</dd>
+              </div>
+            ))}
+          </dl>
+        </section>
+
+        <section className="card rise" style={{ '--i': 6 } as React.CSSProperties}>
+          <h2 className="section-title mb-18">Blog views</h2>
+          {!views.tracking || views.total === 0 ? (
+            <div
+              style={{
+                background: 'var(--surface-sunk)',
+                border: '1px dashed var(--line-strong)',
+                borderRadius: 'var(--r-lg)',
+                padding: 24,
+              }}
+            >
+              <div className="row gap-10" style={{ marginBottom: 11 }}>
+                <span className="dot dot--lg" style={{ background: 'var(--ink-faint)', color: 'var(--ink-faint)' }} aria-hidden="true" />
+                <span className="display" style={{ fontWeight: 600, fontSize: 15 }}>
+                  Tracking is not wired up yet
+                </span>
+              </div>
+              <p className="t-base muted" style={{ lineHeight: 1.65, marginBottom: 18 }}>
+                The <code className="mono" style={{ color: 'var(--lav-ink)', background: 'var(--lav-tint)', padding: '2px 6px', borderRadius: 6 }}>/api/track</code>{' '}
+                snippet is not on the live site, so views read zero. Add it to the post template and
+                this fills in — the number is not being hidden, it is not being collected.
+              </p>
+              <div className="row" style={{ gap: 30 }}>
+                <div>
+                  <div className="display" style={{ fontWeight: 700, fontSize: 26, color: '#C9C6D8' }}>0</div>
+                  <div className="t-sm muted" style={{ marginTop: 3 }}>total views</div>
+                </div>
+                <div>
+                  <div className="display" style={{ fontWeight: 700, fontSize: 26, color: '#C9C6D8' }}>0</div>
+                  <div className="t-sm muted" style={{ marginTop: 3 }}>last 7 days</div>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="row wrap" style={{ gap: 30, marginBottom: 20 }}>
+                <div>
+                  <div className="stat-value stat-value--sm">{num(views.total)}</div>
+                  <div className="t-sm muted" style={{ marginTop: 4 }}>total views</div>
+                </div>
+                <div>
+                  <div className="stat-value stat-value--sm">{num(views.last7)}</div>
+                  <div className="t-sm muted" style={{ marginTop: 4 }}>last 7 days</div>
+                </div>
+                <div>
+                  <div className="stat-value stat-value--sm">{views.uniquePosts}</div>
+                  <div className="t-sm muted" style={{ marginTop: 4 }}>posts with views</div>
+                </div>
+              </div>
+              <ul className="stack gap-8" style={{ listStyle: 'none' }}>
+                {views.topPosts.slice(0, 6).map(post => (
+                  <li key={post.slug} className="row gap-12 hover-row" style={{ padding: '8px 10px' }}>
+                    <Link href={`/topic/${post.slug}`} className="truncate t-base" style={{ flex: 1, color: 'var(--ink-2)' }}>
+                      {post.title}
+                    </Link>
+                    <span className="mono t-sm muted">{num(post.views)}</span>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </section>
+      </div>
+
+      <div className="grid-halves">
+        <section className="card rise" style={{ '--i': 7 } as React.CSSProperties}>
+          <h2 className="section-title" style={{ marginBottom: 14 }}>Upcoming schedule</h2>
+          {cadence.upcoming.length === 0 ? (
+            <EmptyState title="Nothing scheduled" hint="Approved drafts land here with an auto-publish time." />
+          ) : (
+            <div className="x-scroll">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th scope="col">Title</th>
+                    <th scope="col" style={{ textAlign: 'right' }}>Auto-publishes</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {cadence.upcoming.map(item => (
+                    <tr key={item.slug}>
+                      <td>
+                        <Link href={`/topic/${item.slug}`} style={{ fontWeight: 500, color: 'var(--ink)' }}>
+                          {item.title}
+                        </Link>
+                      </td>
+                      <td
+                        className="tnum"
+                        style={{ textAlign: 'right', color: 'var(--lav-ink)', fontWeight: 600 }}
+                      >
+                        {untilShort(item.scheduled_for)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+
+        <section className="card rise" style={{ '--i': 8 } as React.CSSProperties}>
+          <h2 className="section-title mb-18">Top tags</h2>
+          {tags.length === 0 ? (
+            <EmptyState title="No tags yet" hint="Tags come from the brief and drive the blog taxonomy." />
+          ) : (
+            <ul className="stack gap-12" style={{ listStyle: 'none' }}>
+              {tags.map((tag, i) => (
+                <li key={tag.tag} className="row gap-12">
+                  <span className="truncate t-base" style={{ width: 148, flex: 'none', color: 'var(--ink-2)' }}>
+                    {tag.tag}
+                  </span>
+                  <span className="track track--thin" style={{ flex: 1 }}>
+                    <span
+                      className="track-fill bar-grow-x"
+                      style={{
+                        display: 'block',
+                        width: `${(tag.count / tagMax) * 100}%`,
+                        background: i === 0 ? 'var(--lav-deep)' : 'var(--lav)',
+                        '--i': i,
+                      } as React.CSSProperties}
+                    />
+                  </span>
+                  <span className="t-base tnum muted" style={{ width: 22, textAlign: 'right' }}>{tag.count}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      </div>
+    </div>
   )
 }

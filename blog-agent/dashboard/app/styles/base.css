@@ -1,0 +1,174 @@
+/* ─────────────────────────────────────────────────────────────────────────────
+   Trolls v4 — reset, base typography, utilities
+   ────────────────────────────────────────────────────────────────────────── */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body { margin: 0; padding: 0; }
+
+html {
+  -webkit-text-size-adjust: 100%;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: var(--text-md);
+  line-height: 1.6;
+  min-height: 100vh;
+}
+
+h1, h2, h3, h4, p, figure, blockquote { margin: 0; }
+ul, ol { margin: 0; padding: 0; }
+
+a { color: var(--lav-ink); text-decoration: none; }
+a:hover { color: #4A2BC2; }
+
+img, svg { display: block; max-width: 100%; }
+
+button, input, textarea, select { font: inherit; color: inherit; }
+
+::selection { background: #E7DEFD; }
+
+/* Focus is never removed, only restyled — every interactive surface in this
+   app is reachable and visibly reachable by keyboard. */
+:focus-visible {
+  outline: 2px solid var(--lav);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+:focus:not(:focus-visible) { outline: none; }
+
+/* ── Display face ─────────────────────────────────────────────────────────── */
+.display {
+  font-family: var(--font-display);
+  letter-spacing: -.02em;
+}
+.mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+.tnum { font-variant-numeric: tabular-nums; }
+
+/* ── Scroll containers ────────────────────────────────────────────────────── */
+.scroller {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+  overscroll-behavior: contain;
+}
+.scroller::-webkit-scrollbar { width: 8px; height: 8px; }
+.scroller::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 8px; }
+.scroller::-webkit-scrollbar-track { background: transparent; }
+
+/* Wide content (tables, event streams, charts) scrolls inside its own box —
+   the page body must never scroll sideways. */
+.x-scroll { overflow-x: auto; max-width: 100%; }
+
+/* ── Screen-reader-only ───────────────────────────────────────────────────── */
+.sr-only {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Skip link — visible only once focused. */
+.skip-link {
+  position: fixed;
+  top: 12px; left: 12px;
+  z-index: 100;
+  transform: translateY(-200%);
+  background: var(--ink);
+  color: #fff;
+  padding: 10px 18px;
+  border-radius: var(--r-md);
+  font-weight: 600;
+  font-size: var(--text-base);
+  transition: transform var(--t-fast) var(--ease-out);
+}
+.skip-link:focus-visible { transform: none; color: #fff; }
+
+/* ── Text helpers ─────────────────────────────────────────────────────────── */
+.t-xs    { font-size: var(--text-xs); }
+.t-sm    { font-size: var(--text-sm); }
+.t-base  { font-size: var(--text-base); }
+.muted   { color: var(--ink-3); }
+.faint   { color: var(--ink-faint); }
+.pretty  { text-wrap: pretty; }
+.truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+
+/* ── Page headers, shared by every view ───────────────────────────────────── */
+.page-head { position: relative; margin-bottom: 26px; }
+.page-head h1 {
+  font-family: var(--font-display);
+  font-size: var(--text-h1);
+  font-weight: 700;
+  letter-spacing: -.03em;
+  line-height: 1.1;
+  position: relative;
+}
+.page-head p {
+  margin-top: 8px;
+  font-size: var(--text-md);
+  color: var(--ink-3);
+  position: relative;
+  max-width: 76ch;
+}
+.page-head-row {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+.section-title {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: var(--text-xl);
+  letter-spacing: -.02em;
+}
+.section-note {
+  font-size: var(--text-base);
+  color: var(--ink-3);
+  margin-top: 6px;
+  line-height: 1.6;
+  max-width: 78ch;
+}
+
+/* ── Grids used across views ──────────────────────────────────────────────── */
+.grid-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 18px;
+}
+/* Five metrics, not four. With the default track width the fifth card wraps to
+   its own row and reads as an afterthought rather than a peer. */
+.grid-stats--five { grid-template-columns: repeat(auto-fit, minmax(172px, 1fr)); }
+.grid-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 18px;
+}
+.grid-halves {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(330px, 1fr));
+  gap: 22px;
+}
+.stack   { display: flex; flex-direction: column; }
+.row     { display: flex; align-items: center; }
+.wrap    { flex-wrap: wrap; }
+.gap-6   { gap: 6px; }  .gap-8  { gap: 8px; }
+.gap-10  { gap: 10px; } .gap-12 { gap: 12px; }
+.gap-14  { gap: 14px; } .gap-18 { gap: 18px; }
+.gap-22  { gap: 22px; }
+.mb-18   { margin-bottom: 18px; }
+.mb-22   { margin-bottom: 22px; }
+.push    { margin-left: auto; }

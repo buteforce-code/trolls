@@ -1,0 +1,106 @@
+/* ─────────────────────────────────────────────────────────────────────────────
+   Trolls v4 — design tokens
+   Ported from the Claude Design source `Trolls v4.dc.html`.
+
+   The palette is deliberately three-hued: lavender carries the machine's own
+   intent (scheduled, believed, predicted), teal means a thing succeeded or is
+   running healthily, rose means a human has to decide. Grey is everything the
+   operator does not need to look at. Nothing is coloured decoratively — if a
+   colour appears, it is carrying one of those four meanings.
+   ────────────────────────────────────────────────────────────────────────── */
+
+:root {
+  color-scheme: light;
+
+  /* ── Surfaces ───────────────────────────────────────────────────────────── */
+  --bg:           #F6F5FA;
+  --surface:      #ffffff;
+  --surface-sunk: #FAF9FD;
+  --chip:         #EFEDF6;
+  --line:         #EDEBF4;
+  --line-strong:  #DDD9EC;
+  --line-hair:    #F4F2FA;
+
+  /* ── Ink ────────────────────────────────────────────────────────────────── */
+  --ink:       #1C1B29;
+  --ink-2:     #4A4763;
+  /* Darkened from the original #8480A0 (2.6–3.8:1, fails WCAG 1.4.3) to clear
+     4.5:1 against every surface it actually sits on, including --chip. */
+  --ink-3:     #6C678A;
+  --ink-mute:  #9C99B0;
+  --ink-faint: #B3B0C4;
+
+  /* ── Lavender — the engine's own intent ─────────────────────────────────── */
+  --lav:       #C7B0F7;
+  --lav-deep:  #8B6DF0;
+  --lav-ink:   #5636D4;
+  --lav-tint:  #F1EBFE;
+  --lav-edge:  #E0D3FA;
+  --lav-ink-2: #28184F;
+
+  /* ── Teal — running, passed, healthy ────────────────────────────────────── */
+  --teal:      #2BB3A3;
+  /* Darkened from #1D8878 (3.87:1 on --teal-tint, fails WCAG 1.4.3) to 4.5:1+. */
+  --teal-ink:  #1A7C6D;
+  --teal-tint: #E3F6F4;
+
+  /* ── Rose — a human must decide ─────────────────────────────────────────── */
+  --rose:      #F2607A;
+  /* Darkened from #D9436A (3.71:1 on --rose-tint, 4.23:1 on white — both fail
+     WCAG 1.4.3) to clear 4.5:1 on both surfaces. */
+  --rose-ink:  #CD2A54;
+  --rose-deep: #A8324F;
+  --rose-tint: #FDECEF;
+  --rose-edge: #F6DDE3;
+
+  /* ── Amber — worth knowing, not yet wrong ───────────────────────────────── */
+  --amber:      #B98A00;
+  --amber-tint: #FDF6E3;
+  --amber-ink:  #7A6A3A;
+
+  /* ── Neutral accents ────────────────────────────────────────────────────── */
+  --grey-dot: #C9C6D8;
+
+  /* ── Radii — larger on containers, tighter on controls ──────────────────── */
+  --r-pill: 999px;
+  --r-xs:   7px;
+  --r-sm:   11px;
+  --r-md:   14px;
+  --r-lg:   18px;
+  --r-xl:   22px;
+  --r-2xl:  24px;
+
+  /* ── Elevation. Shadows are purple-shifted, never neutral grey, so lifted
+        surfaces read as part of the same light as the lavender field. ─────── */
+  --shadow-sm: 0 8px 22px rgba(40, 30, 80, .07);
+  --shadow-md: 0 12px 32px rgba(40, 30, 80, .09);
+  --shadow-lg: 0 18px 44px rgba(28, 22, 50, .30);
+  --shadow-dlg: 0 40px 90px rgba(30, 20, 60, .28);
+
+  /* ── Type ───────────────────────────────────────────────────────────────── */
+  --font-sans:    var(--font-dm-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-sora), var(--font-dm-sans), ui-sans-serif, sans-serif;
+  --font-mono:    ui-monospace, Menlo, Consolas, monospace;
+
+  --text-xs:   11.5px;
+  --text-sm:   12.5px;
+  --text-base: 13.5px;
+  --text-md:   14.5px;
+  --text-lg:   17px;
+  --text-xl:   18px;
+  --text-h2:   23px;
+  --text-h1:   33px;
+
+  /* ── Motion. One easing curve for entrances (expo-out) and one for state
+        changes, so unrelated surfaces still feel driven by one hand. ─────── */
+  --ease-out:  cubic-bezier(.16, 1, .3, 1);
+  --ease-move: ease;
+  --t-fast:    .16s;
+  --t-base:    .2s;
+  --t-slow:    .34s;
+  --t-enter:   .6s;
+
+  /* ── Layout ─────────────────────────────────────────────────────────────── */
+  --sidebar-w:           268px;
+  --sidebar-w-collapsed: 88px;
+}

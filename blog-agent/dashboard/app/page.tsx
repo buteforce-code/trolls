@@ -1,433 +1,240 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { Suspense, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
+import { useSearchParams } from 'next/navigation'
+import { usePipeline } from '../lib/pipeline-context'
+import { LANES, LANE_TITLE, statusMeta } from '../lib/status'
+import type { Topic } from '../lib/types'
+import { PageHeader, EmptyState } from '../components/ui/page-header'
+import { StatCard } from '../components/ui/stat-card'
+import { CadenceChart, CadenceLegend, type CadenceDay } from '../components/ui/cadence-chart'
+import { useToast } from '../components/ui/toast'
+import {
+  BellIcon, CheckCircleIcon, PipelineIcon, PlusIcon, ProgressIcon, ReviewIcon,
+} from '../components/ui/icons'
+import { AutopilotStrip } from '../components/pipeline/autopilot-strip'
+import { GoingOutNext } from '../components/pipeline/going-out-next'
+import { Village } from '../components/pipeline/village'
+import { TopicCard } from '../components/pipeline/topic-card'
+import { NewTopicDialog } from '../components/pipeline/new-topic-dialog'
+import { FeedbackDialog } from '../components/pipeline/feedback-dialog'
 
-// ── Types ────────────────────────────────────────────────────────────────────
-type Topic = {
-  id: string
-  slug: string
-  title: string
-  status: string
-  tags: string[]
-  updated_at: string
-  scheduled_for?: string | null
-}
-
-type AutopilotState = {
-  enabled: boolean
-  gapHours: number
-  scheduled: { slug: string; title: string; scheduled_for: string }[]
-  nextPublishAt?: string | null
-}
-
-// ── Status display helpers ────────────────────────────────────────────────────
-const STATUS_LABEL: Record<string, string> = {
-  queued:             'Queued',
-  researching:        'Researching',
-  verifying_research: 'Review Research',
-  writing:            'Writing',
-  verifying_draft:    'Review Draft',
-  scheduled:          'Scheduled',
-  publishing:         'Publishing',
-  published:          'Published',
-  cancelled:          'Cancelled',
-  failed:             'Failed',
-}
-
-// Future-friendly relative time ("in 3h", "in 2d") for scheduled slots.
-function until(dt: string): string {
-  const diff = new Date(dt).getTime() - Date.now()
-  if (diff <= 0) return 'now'
-  const m = Math.round(diff / 60000)
-  if (m < 60) return `in ${m}m`
-  const h = Math.round(m / 60)
-  if (h < 48) return `in ${h}h`
-  return `in ${Math.round(h / 24)}d`
-}
-
-function relative(dt: string): string {
-  const diff = Date.now() - new Date(dt).getTime()
-  const m = Math.floor(diff / 60000)
-  if (m < 1)  return 'just now'
-  if (m < 60) return `${m}m ago`
-  const h = Math.floor(m / 60)
-  if (h < 24) return `${h}h ago`
-  return `${Math.floor(h / 24)}d ago`
-}
-
-// ── TopicCard ─────────────────────────────────────────────────────────────────
-function TopicCard({ topic, onDelete }: { topic: Topic; onDelete: (slug: string) => void }) {
-  const [deleting, setDeleting]       = useState(false)
-  const [confirmDelete, setConfirm]   = useState(false)
-
-  const handleDelete = async (e: React.MouseEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-    if (!confirmDelete) { setConfirm(true); return }
-    setDeleting(true)
-    try {
-      await fetch('/api/delete', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ slug: topic.slug }),
-      })
-      // Remove from UI immediately — Python will clean up DB in background
-      onDelete(topic.slug)
-    } finally {
-      setDeleting(false)
-    }
-  }
-
+export default function BoardPage() {
+  // `useSearchParams` makes this subtree client-rendered, so it needs its own
+  // boundary or the production prerender of `/` fails.
   return (
-    <div className="card card-link" style={{ position: 'relative' }}>
-      {/* Delete control — top right corner */}
-      <div
-        style={{ position: 'absolute', top: 12, right: 12, zIndex: 2 }}
-        onClick={e => { e.preventDefault(); e.stopPropagation() }}
-      >
-        {confirmDelete ? (
-          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Delete?</span>
-            <button
-              className="btn btn-sm btn-danger"
-              style={{ padding: '3px 8px', fontSize: 11 }}
-              onClick={handleDelete}
-              disabled={deleting}
-            >
-              {deleting ? '...' : 'Yes'}
-            </button>
-            <button
-              className="btn btn-sm btn-outline"
-              style={{ padding: '3px 8px', fontSize: 11 }}
-              onClick={e => { e.preventDefault(); e.stopPropagation(); setConfirm(false) }}
-            >
-              No
-            </button>
-          </div>
-        ) : (
-          <button
-            onClick={handleDelete}
-            className="card-delete-btn"
-            title="Delete topic"
-          >
-            ×
-          </button>
-        )}
+    <Suspense fallback={<BoardSkeleton />}>
+      <Board />
+    </Suspense>
+  )
+}
+
+function BoardSkeleton() {
+  return (
+    <div aria-busy="true" aria-live="polite">
+      <span className="sr-only">Loading the pipeline</span>
+      <div className="card" style={{ height: 96, marginBottom: 20 }} />
+      <div className="grid-stats" style={{ marginBottom: 22 }}>
+        {[0, 1, 2, 3].map(i => <div key={i} className="card card--tight" style={{ height: 148 }} />)}
       </div>
-
-      <Link href={`/topic/${topic.slug}`} style={{ display: 'block' }}>
-        <div className="topic-card-header" style={{ paddingRight: 60 }}>
-          <div className="topic-card-title">{topic.title}</div>
-          <span className={`badge badge-${topic.status}`}>
-            {STATUS_LABEL[topic.status] ?? topic.status}
-          </span>
-        </div>
-        <div className="topic-card-slug">/{topic.slug}</div>
-        <div className="topic-card-tags">
-          {(topic.tags || []).map(t => (
-            <span key={t} className="tag">{t}</span>
-          ))}
-        </div>
-        <div className="topic-card-meta">
-          {topic.status === 'scheduled' && topic.scheduled_for
-            ? <span style={{ color: '#7c3aed', fontWeight: 600 }}>Auto-publishes {until(topic.scheduled_for)}</span>
-            : relative(topic.updated_at)}
-        </div>
-      </Link>
+      <div className="card" style={{ height: 300 }} />
     </div>
   )
 }
 
-// ── New Topic Modal ───────────────────────────────────────────────────────────
-function NewTopicModal({ onClose, onCreated }: { onClose: () => void; onCreated: (topic: Topic) => void }) {
-  const router = useRouter()
-  const [title, setTitle]     = useState('')
-  const [tags, setTags]       = useState('')
-  const [loading, setLoading] = useState(false)
-  const [error, setError]     = useState('')
-  const [statusText, setStatusText] = useState('')
+function Board() {
+  const params = useSearchParams()
+  const { toast } = useToast()
+  const { topics, autopilot, counts, loading, error, refresh, upsertTopic } = usePipeline()
 
-  async function submit(e: { preventDefault(): void }) {
-    e.preventDefault()
-    if (!title.trim()) return
-    setLoading(true)
-    setError('')
-    setStatusText('Starting the research pipeline on the server...')
-    try {
-      const res = await fetch('/api/run', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: title.trim(), tags: tags.split(',').map(t => t.trim()).filter(Boolean) }),
-      })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error || 'Failed to start')
-      const slug = data.slug as string
-      const optimisticTopic: Topic = {
-        id: `pending:${slug}`,
-        slug,
-        title: title.trim(),
-        status: 'queued',
-        tags: tags.split(',').map(t => t.trim()).filter(Boolean),
-        updated_at: new Date().toISOString(),
-      }
-      onCreated(optimisticTopic)
-      setStatusText(`Job queued as /${slug}. Waiting for the topic record...`)
+  const [newTopicOpen, setNewTopicOpen] = useState(false)
+  const [feedbackFor, setFeedbackFor] = useState<Topic | null>(null)
+  const [cadence, setCadence] = useState<CadenceDay[] | null>(null)
 
-      for (let attempt = 0; attempt < 15; attempt += 1) {
-        await new Promise(r => setTimeout(r, 1000))
-        const topicRes = await fetch(`/api/topic/${slug}`)
-        if (topicRes.ok) {
-          router.push(`/topic/${slug}`)
-          onClose()
-          return
-        }
-      }
+  const lane = params.get('lane') ?? 'all'
+  const query = (params.get('q') ?? '').trim().toLowerCase()
 
-      setStatusText(`Job started as /${slug}. The dashboard will refresh automatically if it takes longer to appear.`)
-      onClose()
-    } catch (err: any) {
-      setError(err.message)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  return (
-    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="modal">
-        <h2>New Blog Topic</h2>
-        <p>The agent will research it across 9 sources, write, humanise, and queue it for your review.</p>
-        <form onSubmit={submit}>
-          <div className="field">
-            <label>Topic / Working Title *</label>
-            <input
-              value={title}
-              onChange={e => setTitle(e.target.value)}
-              placeholder="e.g. AI agents are replacing junior developers"
-              autoFocus
-              required
-            />
-          </div>
-          <div className="field">
-            <label>Tags</label>
-            <input
-              value={tags}
-              onChange={e => setTags(e.target.value)}
-              placeholder="ai, agents, engineering (comma separated)"
-            />
-            <div className="field-hint">Used for filtering and blog taxonomy.</div>
-          </div>
-          {statusText && <div style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 12 }}>{statusText}</div>}
-          {error && <div style={{ color: 'var(--red)', fontSize: 13, marginBottom: 12 }}>{error}</div>}
-          <div style={{ color: 'var(--text-muted)', fontSize: 12, marginBottom: 12 }}>
-            Raw execution logs appear in the server logs, not in the browser console.
-          </div>
-          <div className="modal-actions">
-            <button type="button" className="btn btn-outline" onClick={onClose} disabled={loading}>Cancel</button>
-            <button type="submit" className="btn btn-primary" disabled={loading || !title.trim()}>
-              {loading ? <><span className="spinner" /> Starting research...</> : '→ Start Research'}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-  )
-}
-
-// ── Autopilot status strip ────────────────────────────────────────────────────
-function AutopilotBar({ state }: { state: AutopilotState | null }) {
-  if (!state) return null
-  const next = state.scheduled[0]
-  return (
-    <div
-      className="card"
-      style={{
-        display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap',
-        marginBottom: 20, padding: '12px 16px',
-        borderColor: state.enabled ? 'rgba(124,58,237,0.25)' : 'var(--border)',
-        background: state.enabled ? 'rgba(124,58,237,0.04)' : 'transparent',
-      }}
-    >
-      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontWeight: 700, fontSize: 13 }}>
-        <span
-          aria-hidden
-          style={{
-            width: 9, height: 9, borderRadius: '50%',
-            background: state.enabled ? '#7c3aed' : '#9ca3af',
-            animation: state.enabled ? 'pulse 1.4s ease-in-out infinite' : 'none',
-          }}
-        />
-        Autopilot {state.enabled ? 'On' : 'Paused'}
-      </span>
-      <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>
-        1 post every {state.gapHours}h
-      </span>
-      {state.scheduled.length > 0 ? (
-        <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>
-          · {state.scheduled.length} scheduled
-          {next && <> · next <strong style={{ color: '#7c3aed' }}>{until(next.scheduled_for)}</strong></>}
-        </span>
-      ) : (
-        <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>· nothing scheduled yet</span>
-      )}
-      <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--text-muted)' }}>
-        Scheduled posts auto-publish unless you reject them first.
-      </span>
-    </div>
-  )
-}
-
-// ── Main Page ─────────────────────────────────────────────────────────────────
-export default function Dashboard() {
-  const [topics, setTopics]       = useState<Topic[]>([])
-  const [loading, setLoading]     = useState(true)
-  const [activeTag, setActiveTag] = useState<string | null>(null)
-  const [modal, setModal]         = useState(false)
-  const [autopilot, setAutopilot] = useState<AutopilotState | null>(null)
-
-  const [lastRefresh, setLastRefresh] = useState<Date>(new Date())
-
-  const load = useCallback(async (): Promise<Topic[]> => {
-    try {
-      const res = await fetch('/api/topics')
-      const data = await res.json()
-      const next: Topic[] = data.topics || []
-      setTopics(next)
-      setLastRefresh(new Date())
-      // Refresh autopilot status alongside topics (best-effort, non-blocking).
-      fetch('/api/autopilot')
-        .then(r => (r.ok ? r.json() : null))
-        .then(s => { if (s) setAutopilot(s) })
-        .catch(() => {})
-      return next
-    } catch {
-      return []
-    } finally {
-      setLoading(false)
-    }
-  }, [])
-
-  // Adaptive polling: 3s when any topic is actively processing, 10s otherwise.
+  // Cadence is the one number on this page that does not come from the topic
+  // list — it counts real `published_at` timestamps, so a topic re-published or
+  // back-dated shows up on the right day rather than on the day its row moved.
   useEffect(() => {
     let cancelled = false
-    let timer: ReturnType<typeof setTimeout>
-    const ACTIVE = new Set(['queued', 'researching', 'writing', 'publishing'])
+    fetch('/api/stats', { headers: { accept: 'application/json' } })
+      .then(r => (r.ok ? r.json() : null))
+      .then(data => {
+        if (cancelled || !data?.cadence?.publishedByDay) return
+        setCadence(data.cadence.publishedByDay as CadenceDay[])
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [])
 
-    const loop = async (): Promise<void> => {
-      if (cancelled) return
-      const fresh = await load()
-      if (cancelled) return
-      const delay = fresh.some(t => ACTIVE.has(t.status)) ? 3000 : 10000
-      timer = setTimeout(loop, delay)
+  const matches = useMemo(() => {
+    if (!query) return topics
+    return topics.filter(t =>
+      t.title.toLowerCase().includes(query)
+      || t.slug.includes(query)
+      || (t.tags ?? []).some(tag => tag.toLowerCase().includes(query)),
+    )
+  }, [topics, query])
+
+  const groups = useMemo(() => (
+    LANES
+      .filter(l => lane === 'all' || lane === l.key)
+      .map(l => ({ ...l, items: matches.filter(t => statusMeta(t.status).group === l.key) }))
+      .filter(l => l.items.length > 0)
+  ), [matches, lane])
+
+  const nextOut = useMemo(() => {
+    const scheduled = topics
+      .filter(t => t.status === 'scheduled' && t.scheduled_for)
+      .sort((a, b) => String(a.scheduled_for).localeCompare(String(b.scheduled_for)))
+    return scheduled[0] ?? null
+  }, [topics])
+
+  const queuedCount = topics.filter(t => t.status === 'queued').length
+
+  async function publishNow(topic: Topic) {
+    // `--approve` is the pipeline's own "move this forward" verb; on a scheduled
+    // topic that means publish. Going through Python rather than writing the row
+    // here keeps every state transition in one place.
+    const res = await fetch('/api/approve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ slug: topic.slug }),
+    })
+    if (!res.ok) {
+      toast('Could not publish — check the server logs', 'error')
+      return
     }
-    loop()
-    return () => { cancelled = true; clearTimeout(timer) }
-  }, [load])
-
-  const handleDelete = (slug: string) => {
-    setTopics(prev => prev.filter(t => t.slug !== slug))
+    toast('Publishing now')
+    refresh()
   }
 
-  const handleCreated = (topic: Topic) => {
-    setTopics(prev => [topic, ...prev.filter(existing => existing.slug !== topic.slug)])
-  }
-
-  const allTags  = Array.from(new Set(topics.flatMap(t => t.tags || [])))
-  const filtered = activeTag ? topics.filter(t => (t.tags || []).includes(activeTag)) : topics
-
-  const counts = {
-    total:     topics.length,
-    pending:   topics.filter(t => ['verifying_research', 'verifying_draft'].includes(t.status)).length,
-    published: topics.filter(t => t.status === 'published').length,
-    failed:    topics.filter(t => t.status === 'failed').length,
-  }
+  if (loading && topics.length === 0) return <BoardSkeleton />
 
   return (
-    <main>
-      <div className="container">
-        <div className="page-header">
-          <div className="page-header-row">
-            <div>
-              <h1>Blog Topics</h1>
-              <p>
-                {counts.total} topics
-                {counts.pending > 0  && <> · <span style={{ color: 'var(--amber)' }}>{counts.pending} need review</span></>}
-                {counts.published > 0 && <> · {counts.published} published</>}
-                {counts.failed > 0    && <> · <span style={{ color: 'var(--red)' }}>{counts.failed} failed</span></>}
-              </p>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-              <span
-                title={`Last refresh: ${lastRefresh.toLocaleTimeString()}`}
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text-muted)' }}
-              >
-                <span
-                  aria-hidden
-                  style={{
-                    width: 8, height: 8, borderRadius: '50%',
-                    background: 'var(--green, #16a34a)',
-                    animation: 'pulse 1.2s ease-in-out infinite',
-                  }}
-                />
-                Live
-              </span>
-              <Link href="/stats" className="btn btn-outline">📊 Analytics</Link>
-              <button className="btn btn-primary" onClick={() => setModal(true)}>
-                + New Topic
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {/* Autopilot status */}
-        <AutopilotBar state={autopilot} />
-
-        {/* Tag filter */}
-        {allTags.length > 0 && (
-          <div className="filters">
-            <span className="filter-label">Filter:</span>
-            <button className={`tag ${!activeTag ? 'active' : ''}`} onClick={() => setActiveTag(null)}>
-              All
+    <div className="view-enter">
+      <PageHeader
+        title={query ? 'Search results' : LANE_TITLE[lane] ?? 'Pipeline'}
+        subtitle={query
+          ? `Matching “${params.get('q')}”`
+          : 'Plan, veto and ship what the village produces.'}
+        actions={
+          <>
+            <Link
+              href="/?lane=attention"
+              className="icon-btn"
+              aria-label={counts.attention
+                ? `${counts.attention} topics need review`
+                : 'Nothing needs review'}
+            >
+              <BellIcon />
+              {counts.attention > 0 && (
+                <span className="icon-btn-badge" aria-hidden="true">{counts.attention}</span>
+              )}
+            </Link>
+            <button type="button" className="btn btn--primary" onClick={() => setNewTopicOpen(true)}>
+              <PlusIcon />
+              New topic
             </button>
-            {allTags.map(tag => (
-              <button
-                key={tag}
-                className={`tag ${activeTag === tag ? 'active' : ''}`}
-                onClick={() => setActiveTag(activeTag === tag ? null : tag)}
-              >
-                {tag}
-              </button>
-            ))}
-          </div>
-        )}
+          </>
+        }
+      />
 
-        {/* Grid */}
-        {loading ? (
-          <div className="empty">
-            <div className="empty-icon">⏳</div>
-            <h2>Loading topics...</h2>
-          </div>
-        ) : filtered.length === 0 ? (
-          <div className="empty">
-            <div className="empty-icon">✦</div>
-            <h2>{activeTag ? `No topics tagged "${activeTag}"` : 'No topics yet'}</h2>
-            <p>Click <strong>+ New Topic</strong> to start the research pipeline.</p>
-          </div>
-        ) : (
-          <div className="topic-grid">
-            {filtered.map(t => <TopicCard key={t.id} topic={t} onDelete={handleDelete} />)}
-          </div>
-        )}
+      {error && (
+        <p className="notice notice--rose mb-22" role="alert">
+          Could not load the pipeline: {error}
+        </p>
+      )}
+
+      <AutopilotStrip state={autopilot} queuedCount={queuedCount} onRan={refresh} />
+
+      <div className="grid-stats mb-22">
+        <StatCard
+          label="Topics in play" value={topics.length} delta="live"
+          sub="Across the whole village" icon={<PipelineIcon />} href="/" index={2}
+        />
+        <StatCard
+          label="Published" value={counts.published} tone="teal"
+          sub="Live on the blog" icon={<CheckCircleIcon />} href="/?lane=published" index={3}
+        />
+        <StatCard
+          label="In progress" value={counts.progress} tone="lav" delta="running"
+          sub="Agents working right now" icon={<ProgressIcon />} href="/?lane=progress" index={4}
+        />
+        <StatCard
+          label="Needs review" value={counts.attention} tone="rose" delta="waiting on you"
+          sub="Nothing moves until you call it" icon={<ReviewIcon />} href="/?lane=attention" index={5}
+        />
       </div>
 
-      {modal && (
-        <NewTopicModal
-          onClose={() => setModal(false)}
-          onCreated={handleCreated}
-        />
+      {cadence && cadence.length > 0 && (
+        <section className="card rise mb-22" style={{ '--i': 4 } as React.CSSProperties}>
+          <div className="row wrap gap-18" style={{ justifyContent: 'space-between', marginBottom: 20 }}>
+            <div>
+              <h2 className="section-title">Publishing cadence</h2>
+              <p className="section-note">
+                {cadence.reduce((a, d) => a + d.count, 0)} posts in the last {cadence.length} days
+              </p>
+            </div>
+            <CadenceLegend />
+          </div>
+          <CadenceChart days={cadence} />
+        </section>
       )}
-    </main>
+
+      <div className="row wrap gap-22 mb-22" style={{ alignItems: 'flex-start' }}>
+        <GoingOutNext
+          topic={nextOut}
+          onFeedback={setFeedbackFor}
+          onPublishNow={publishNow}
+        />
+        <Village topics={topics} />
+      </div>
+
+      {groups.length === 0 ? (
+        <EmptyState
+          title="Nothing here"
+          hint={query ? 'Try a different search.' : 'This lane is clear.'}
+          action={
+            <button type="button" className="btn btn--lav" onClick={() => setNewTopicOpen(true)}>
+              Brief a new topic
+            </button>
+          }
+        />
+      ) : (
+        groups.map((group, gi) => (
+          <section key={group.key} style={{ marginBottom: 30 }} aria-label={group.label}>
+            <div className="row gap-12" style={{ marginBottom: 16, padding: '0 2px' }}>
+              <span
+                className="dot dot--lg"
+                style={{ background: group.tone, color: group.tone }}
+                aria-hidden="true"
+              />
+              <h2 className="section-title" style={{ fontSize: 16 }}>{group.label}</h2>
+              <span className="chip chip--grey">{group.items.length}</span>
+            </div>
+            <div className="grid-cards">
+              {group.items.map((topic, i) => (
+                <TopicCard key={topic.id} topic={topic} index={gi * 2 + Math.min(i, 6)} />
+              ))}
+            </div>
+          </section>
+        ))
+      )}
+
+      <NewTopicDialog
+        open={newTopicOpen}
+        onClose={() => setNewTopicOpen(false)}
+        onCreated={upsertTopic}
+      />
+      <FeedbackDialog
+        topic={feedbackFor}
+        onClose={() => setFeedbackFor(null)}
+        onSubmitted={refresh}
+      />
+    </div>
   )
 }
