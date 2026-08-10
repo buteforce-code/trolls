@@ -37,9 +37,13 @@ RUN cd blog-agent/dashboard && npm ci
 
 COPY . .
 
-# `next build` reads env at build time and lib/supabase.ts calls createClient at
-# module scope, which throws on an empty URL. The platform's environment
-# variables must therefore be set BEFORE the first deploy, not after it.
+# No ARG lines, deliberately. Railway hands service variables to a Dockerfile
+# build only as build args, and a build arg a Dockerfile does not declare is a
+# build arg it never sees — so a build that needs secrets fails whether or not
+# they are set on the service. Declaring them would also bake SUPABASE_SERVICE_KEY
+# into an image layer that `docker history` can read. Nothing here needs them:
+# lib/supabase.ts opens its connection on first request, and no client component
+# reads Supabase, so no NEXT_PUBLIC_ value has to be inlined into the bundle.
 RUN cd blog-agent/dashboard && npm run build
 
 ENV NODE_ENV=production
