@@ -287,8 +287,11 @@ def _run(agent: LlmAgent, prompt: str, session_id: str) -> str:
     # spent, not report what already was.
     recorder.check_ceiling()
 
-    from swarm.llm import active_model_name
-    model = active_model_name()
+    # Read off the agent, not the env: with per-role routing the env no longer
+    # says which model this particular agent got, and a cost line attributed to
+    # the wrong model is worse than no cost line.
+    from swarm.llm import model_name_of
+    model = model_name_of(agent)
     recorder.emit(agent.name, tm.KIND_AGENT_STARTED, detail={"model": model})
     started = time.monotonic()
 
@@ -421,16 +424,27 @@ def _clean_expanded_section(raw: str, heading_line: str) -> str:
 # ── Orchestrator ─────────────────────────────────────────────────────────────
 class BlogOrchestrator:
     def __init__(self) -> None:
-        from swarm.llm import make_text_model, model_label
-        # Provider-agnostic: OpenAI (LiteLlm) by default, Gemini as a fallback.
+        from swarm.llm import ROLES, make_text_model, routing_label
+        # Provider-agnostic and role-aware: each role resolves its own model, so
+        # the writer can sit on a frontier model while the mechanical roles
+        # (schema, linker, social) run somewhere cheap. Unconfigured, every role
+        # resolves to the same model and this is the old single-model behaviour.
         # ADK's LlmAgent accepts either a LiteLlm instance or a model-name string.
+        self._models = {role: make_text_model(role) for role in ROLES}
+        # Kept as the unrouted default for callers that predate per-role routing.
         self.model = make_text_model()
-        print(f"[orchestrator] LLM model: {model_label()}", flush=True)
-        self.research_agent  = make_research_agent(self.model)
-        self.audit_agent     = make_audit_agent(self.model)
-        self.writer_agent    = make_writer_agent(self.model)
-        self.humaniser_agent = make_humaniser_agent(self.model)
-        self.publisher_agent = make_publisher_agent(self.model)
+        print(f"[orchestrator] LLM routing: {routing_label()}", flush=True)
+        self.research_agent  = make_research_agent(self.model_for("research"))
+        self.audit_agent     = make_audit_agent(self.model_for("audit"))
+        self.writer_agent    = make_writer_agent(self.model_for("writer"))
+        self.humaniser_agent = make_humaniser_agent(self.model_for("humaniser"))
+        self.publisher_agent = make_publisher_agent(self.model_for("publisher"))
+
+    def model_for(self, role: str) -> Any:
+        """Model object for one role. Falls back to the default rather than raising:
+        a role added to a call site but not to `ROLES` should cost a wrong model,
+        not a dead pipeline."""
+        return self._models.get(role, self.model)
 
     # ── Stage: Research ──────────────────────────────────────────────────────
     REQUIRED_DIGEST_FIELDS = (
@@ -885,7 +899,7 @@ class BlogOrchestrator:
             title=title,
             tags=tags,
             word_count=word_count_pre,
-            model=self.model,
+            model=self.model_for("imager"),
             _run_agent_fn=_run,
             session_id=topic_id,
         )
@@ -906,7 +920,7 @@ class BlogOrchestrator:
         linked_mdx = run_linking(
             mdx=imaged_mdx,
             research_json=research_json,
-            model=self.model,
+            model=self.model_for("linker"),
             _run_agent_fn=_run,
             session_id=topic_id,
         )
@@ -940,7 +954,7 @@ class BlogOrchestrator:
                 meta_title=meta_title,
                 meta_description=meta_desc,
                 hero_image_url=hero_image_url or "",
-                model=self.model,
+                model=self.model_for("schema"),
                 _run_agent_fn=_run,
                 session_id=topic_id,
             )
@@ -971,7 +985,7 @@ class BlogOrchestrator:
             social_kit = run_social(
                 mdx=linked_mdx,
                 research_json=research_json,
-                model=self.model,
+                model=self.model_for("social"),
                 _run_agent_fn=_run,
                 session_id=topic_id,
             )

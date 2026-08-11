@@ -73,6 +73,17 @@ RUN_STATUS_FAILED = "failed"
 # gpt-5.4 is the active writer model. Its output token is 1.5x gpt-4o's, which is
 # the deliberate trade: gpt-4o was cheaper per call and could not clear the length
 # floor, so it burned a failed run plus an expansion pass instead of one call.
+#
+# Keys are *bare* model names — `_normalise_model` strips the provider prefix, so
+# `openai/gpt-5.4` and `openrouter/openai/gpt-5.4` both price off "gpt-5.4". That
+# conflation is deliberate (same model, near-enough the same rate) but it means an
+# OpenRouter figure reads slightly low: OpenRouter bills the upstream rate plus a
+# top-up fee this table does not model. Treat routed costs as a floor.
+#
+# Per-role routing (see swarm/llm.py) makes it easy to point a role at a model
+# absent from this table. That is not fatal but it is not free either: an unpriced
+# model costs $0 by this module's arithmetic, so the USD ceilings stop binding it
+# and only MAX_RUN_TOKENS holds. Add the model here or set LLM_PRICE_OVERRIDES.
 DEFAULT_PRICES: dict[str, tuple[float, float]] = {
     "gpt-5.4":              (2.50, 15.00),
     "gpt-5.4-mini":         (0.75,  4.50),
@@ -81,6 +92,13 @@ DEFAULT_PRICES: dict[str, tuple[float, float]] = {
     "gpt-4o-mini":          (0.15,  0.60),
     "gemini-2.0-flash":     (0.10,  0.40),
     "gemini-2.5-flash":     (0.30,  2.50),
+    # Routing targets, read from openrouter.ai/api/v1/models on 2026-08-11. These
+    # are the upstream list rates OpenRouter passes through; its top-up fee is not
+    # modelled here, so a routed run reads a few percent light.
+    "claude-sonnet-4.6":    (3.00, 15.00),
+    "claude-haiku-4.5":     (1.00,  5.00),
+    "gpt-5-mini":           (0.25,  2.00),
+    "deepseek-chat-v3.1":   (0.25,  0.95),
 }
 
 # Flat per-image cost, USD. Images are off by default (ENABLE_IMAGES=false) but

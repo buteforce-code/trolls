@@ -264,7 +264,7 @@ def _refill(db: Any, orch: Any, batch: int, log: list[str]) -> int:
 
     log.append(f"queue empty — ideating {batch} new topics...")
     try:
-        ideas = run_ideation(model=orch.model, existing_titles=existing_titles,
+        ideas = run_ideation(model=orch.model_for("ideator"), existing_titles=existing_titles,
                              batch=batch, db=db)
     except Exception as exc:
         log.append(f"  ideation crashed: {exc}")

@@ -159,9 +159,15 @@ npm ci
 
 Environment:
 
-- Copy `.env.example` to `.env` in `blog-agent/` and set: `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `SUPABASE_DB_URL`, `OPENAI_API_KEY` (provider defaults to `LLM_PROVIDER=openai`, model `OPENAI_MODEL=gpt-4o`), Tavily/YouTube/GitHub keys, and (for live publish) `AGENT_SECRET_KEY` + `SITE_API_URL`.
+- Copy `.env.example` to `.env` in `blog-agent/` and set: `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `SUPABASE_DB_URL`, `OPENAI_API_KEY` (provider defaults to `LLM_PROVIDER=openai`, model `OPENAI_MODEL=gpt-5.4`), Tavily/YouTube/GitHub keys, and (for live publish) `AGENT_SECRET_KEY` + `SITE_API_URL`.
 
-> **LLM provider.** The swarm runs on OpenAI (`gpt-4o`) via ADK's `LiteLlm` wrapper — see `swarm/llm.py`. All eight agents share one model. To fall back to Gemini, set `LLM_PROVIDER=gemini` and the `ADK_GEMINI_MODEL` / Google keys. Image generation is opt-in: `ENABLE_IMAGES=true` (+ `OPENAI_IMAGE_MODEL`, default `dall-e-3`).
+> **LLM provider and routing.** Every model comes from `swarm/llm.py`. Unconfigured, all ten roles share one model (`LLM_PROVIDER=openai`, `OPENAI_MODEL=gpt-5.4`) — the original behaviour, and still the default so a missing env var cannot quietly demote the writer.
+>
+> To split roles across models, set `LLM_MODEL_<ROLE>` to a provider-qualified spec — `openai/gpt-5.4`, `openrouter/anthropic/claude-haiku-4.5`, `gemini/gemini-2.5-flash`. `LLM_MODEL_DEFAULT` covers the rest. Roles: `research audit writer humaniser publisher linker schema social imager ideator`. OpenRouter needs `OPENROUTER_API_KEY` and gives one balance across every vendor; the trade is a top-up fee and a third party in the request path. The startup log prints the resolved routing table, and each `/swarm` event carries the model that agent actually ran on.
+>
+> **Any model change must be re-gated.** The writer is bound by a 1,100-word floor and `swarm/geo.py`; `gpt-4o` and `gpt-5.4-mini` both failed it. A cheap model that fails the gate costs a re-run, not a saving. Cheap models belong on `schema`, `linker`, `social`, `publisher`, `imager` — structured transforms whose output is validated downstream, where the final GEO audit catches damage loudly. Add any new model to `DEFAULT_PRICES` in `swarm/telemetry.py` or set `LLM_PRICE_OVERRIDES`: an unpriced model costs `$0` by that module's arithmetic, which makes the USD spend ceilings inert for it.
+>
+> Image generation is opt-in and OpenAI-only: `ENABLE_IMAGES=true` (+ `OPENAI_IMAGE_MODEL`, default `dall-e-3`).
 - Copy `.env.example` to `dashboard/.env.local` (or map only required keys).
 
 Database:

@@ -1,25 +1,48 @@
 """
 Central LLM model factory for the Buteforce blog swarm.
 
-Every ADK agent (research, writer, humaniser, publisher, ideator, linker,
-schema, social) gets its text model from here, so switching providers is a
-single env change rather than an edit across eight files.
+Every ADK agent (research, audit, writer, humaniser, publisher, linker, schema,
+social, imager, ideator) gets its text model from here, so switching providers or
+re-routing one role is an env change rather than an edit across ten files.
+
+Two layers, in priority order
+-----------------------------
+1. **Per-role routing** (preferred). ``LLM_MODEL_<ROLE>`` names a fully qualified
+   LiteLLM spec for one role, e.g.::
+
+       LLM_MODEL_WRITER=openai/gpt-5.4
+       LLM_MODEL_SCHEMA=openrouter/google/gemini-2.5-flash
+       LLM_MODEL_DEFAULT=openrouter/anthropic/claude-sonnet-4.5
+
+   ``LLM_MODEL_DEFAULT`` covers every role without its own override. Roles can
+   sit on different providers in the same run — the writer on OpenAI direct, the
+   mechanical roles on OpenRouter — because the provider is read from the spec,
+   not from a global switch.
+
+2. **Legacy single-model path** (the default when no ``LLM_MODEL_*`` var is set).
+   ``LLM_PROVIDER`` + ``OPENAI_MODEL`` / ``ADK_GEMINI_MODEL``, exactly as before.
+   With nothing configured this module behaves identically to the single-model
+   version it replaced — routing is opt-in, so a missing env var cannot silently
+   demote the writer to a cheap model.
 
 Providers
 ---------
-- ``openai`` (default) → returns an ADK ``LiteLlm`` wrapper around an OpenAI
-  chat model. Requires ``OPENAI_API_KEY`` in the environment; LiteLLM reads it
-  automatically. The ``litellm`` package must be installed.
-- ``gemini`` → returns the bare model-name string, which ADK resolves natively
-  via google-genai. Kept as a fallback so the pipeline can flip back without a
-  code change.
+- ``openai/<model>`` → ADK ``LiteLlm``. Needs ``OPENAI_API_KEY``.
+- ``openrouter/<vendor>/<model>`` → ADK ``LiteLlm``. Needs ``OPENROUTER_API_KEY``.
+  One balance across every vendor, at the cost of a per-top-up fee and a third
+  party in the request path.
+- ``gemini/<model>`` → ADK ``LiteLlm``. Needs ``GEMINI_API_KEY``.
+- ``LLM_PROVIDER=gemini`` (legacy path only) → the bare model-name string, which
+  ADK resolves natively via google-genai.
 
 Env vars
 --------
-LLM_PROVIDER       openai | gemini            (default: openai)
-OPENAI_MODEL       OpenAI chat model name     (default: gpt-5.4)
-OPENAI_MAX_TOKENS  max output tokens          (default: 8192)
-ADK_GEMINI_MODEL   Gemini model name          (default: gemini-2.0-flash)
+LLM_MODEL_DEFAULT   fallback spec for every role   (unset → legacy path)
+LLM_MODEL_<ROLE>    per-role spec override         (unset → LLM_MODEL_DEFAULT)
+LLM_PROVIDER        openai | gemini                (default: openai)
+OPENAI_MODEL        OpenAI chat model name         (default: gpt-5.4)
+OPENAI_MAX_TOKENS   max output tokens              (default: 8192)
+ADK_GEMINI_MODEL    Gemini model name              (default: gemini-2.0-flash)
 """
 from __future__ import annotations
 
@@ -46,6 +69,33 @@ DEFAULT_GEMINI_MODEL = "gemini-2.0-flash"
 # unused headroom costs nothing, and hitting the cap truncates mid-post.
 DEFAULT_MAX_TOKENS = 8192
 
+# Every role that reaches a model. Used to render the routing table at startup and
+# to validate role names, so a typo in a call site fails loudly here instead of
+# silently resolving to the default model.
+ROLES: tuple[str, ...] = (
+    "research", "audit", "writer", "humaniser", "publisher",
+    "linker", "schema", "social", "imager", "ideator",
+)
+
+# Which env var holds the API key for each provider prefix. Checked before the
+# call so a missing key is a startup error naming the variable, rather than a
+# LiteLLM authentication failure eight stages into a run.
+_PROVIDER_KEYS: dict[str, tuple[str, ...]] = {
+    "openai":     ("OPENAI_API_KEY",),
+    "openrouter": ("OPENROUTER_API_KEY",),
+    "gemini":     ("GEMINI_API_KEY", "GOOGLE_AI_API_KEY"),
+}
+
+# One model object per distinct spec, shared across the roles that resolve to it.
+# The single-model version already shared one LiteLlm instance across all ten
+# agents, so sharing is established as safe here; this only narrows it.
+_MODEL_CACHE: dict[str, Any] = {}
+
+
+def reset_cache() -> None:
+    """Drop cached model objects. For tests that mutate the env between cases."""
+    _MODEL_CACHE.clear()
+
 
 def _provider() -> str:
     return os.environ.get("LLM_PROVIDER", "openai").strip().lower()
@@ -58,11 +108,74 @@ def _max_tokens() -> int:
         return DEFAULT_MAX_TOKENS
 
 
-def make_text_model() -> Any:
-    """Return the model object/string the ADK ``LlmAgent`` should use.
+def _role_env(role: str) -> str:
+    return f"LLM_MODEL_{role.strip().upper()}"
 
-    For OpenAI this is a ``LiteLlm`` instance; for Gemini it is a plain string.
-    ``LlmAgent(model=...)`` accepts either form.
+
+def spec_for(role: str) -> str | None:
+    """Fully qualified LiteLLM spec for a role, or None to use the legacy path.
+
+    Returns None only when neither the role's own var nor LLM_MODEL_DEFAULT is
+    set — that is the signal to fall through to LLM_PROVIDER/OPENAI_MODEL.
+    """
+    explicit = os.environ.get(_role_env(role), "").strip()
+    if explicit:
+        return _qualify(explicit)
+    shared = os.environ.get("LLM_MODEL_DEFAULT", "").strip()
+    if shared:
+        return _qualify(shared)
+    return None
+
+
+def _qualify(spec: str) -> str:
+    """Add the implied ``openai/`` prefix to a bare model name.
+
+    ``gpt-5.4`` and ``openai/gpt-5.4`` mean the same thing, so both are accepted;
+    anything already carrying a known provider prefix is left alone.
+    """
+    spec = spec.strip()
+    head = spec.split("/", 1)[0].lower()
+    if head in _PROVIDER_KEYS:
+        return spec
+    return f"openai/{spec}"
+
+
+def _require_key(spec: str) -> None:
+    provider = spec.split("/", 1)[0].lower()
+    candidates = _PROVIDER_KEYS.get(provider)
+    if not candidates:
+        raise ValueError(
+            f"Model spec '{spec}' names an unsupported provider '{provider}'. "
+            f"Use one of: {', '.join(sorted(_PROVIDER_KEYS))}."
+        )
+    if not any(os.environ.get(name) for name in candidates):
+        raise RuntimeError(
+            f"Model spec '{spec}' needs {' or '.join(candidates)}, which is not set. "
+            f"Add it to .env (or the Railway env) and retry."
+        )
+
+
+def _build(spec: str) -> Any:
+    """LiteLlm instance for a fully qualified spec. Cached per spec."""
+    if spec in _MODEL_CACHE:
+        return _MODEL_CACHE[spec]
+
+    _require_key(spec)
+    # Imported lazily so a Gemini-only deploy doesn't need litellm installed.
+    from google.adk.models.lite_llm import LiteLlm
+
+    # LiteLLM resolves the provider from the prefix and reads the matching key
+    # from the environment. Extra kwargs are forwarded to litellm.completion().
+    model = LiteLlm(model=spec, max_tokens=_max_tokens())
+    _MODEL_CACHE[spec] = model
+    return model
+
+
+def _legacy_model() -> Any:
+    """The pre-routing single-model path, unchanged.
+
+    Reached when no LLM_MODEL_* var is set, which is what keeps an unconfigured
+    deploy byte-identical to the single-model behaviour.
     """
     provider = _provider()
 
@@ -73,37 +186,97 @@ def make_text_model() -> Any:
         if not os.environ.get("OPENAI_API_KEY"):
             raise RuntimeError(
                 "LLM_PROVIDER=openai but OPENAI_API_KEY is not set. "
-                "Add it to .env (or the Render env) and retry."
+                "Add it to .env (or the Railway env) and retry."
             )
-        # Imported lazily so a Gemini-only deploy doesn't need litellm installed.
-        from google.adk.models.lite_llm import LiteLlm
-
         model_name = os.environ.get("OPENAI_MODEL", DEFAULT_OPENAI_MODEL)
-        # LiteLLM resolves the OpenAI provider from the "openai/" prefix and
-        # reads OPENAI_API_KEY from the environment. Extra kwargs are forwarded
-        # to litellm.completion().
-        return LiteLlm(model=f"openai/{model_name}", max_tokens=_max_tokens())
+        return _build(f"openai/{model_name}")
 
     raise ValueError(
         f"Unknown LLM_PROVIDER '{provider}'. Use 'openai' or 'gemini'."
     )
 
 
-def active_model_name() -> str:
-    """Bare model name for the active provider, e.g. 'gpt-4o'.
+def make_text_model(role: str = "default") -> Any:
+    """Return the model object/string the ADK ``LlmAgent`` for ``role`` should use.
 
-    Used by telemetry to price a call. Unlike ``model_label()`` this carries no
-    decoration, so it can be looked up directly in the cost table.
+    For LiteLLM providers this is a ``LiteLlm`` instance; for the legacy native
+    Gemini path it is a plain string. ``LlmAgent(model=...)`` accepts either form.
+
+    ``role="default"`` keeps the no-argument call working for callers that have no
+    role of their own.
     """
+    if role != "default" and role not in ROLES:
+        raise ValueError(f"Unknown model role '{role}'. Known roles: {', '.join(ROLES)}.")
+
+    spec = spec_for(role)
+    if spec is None:
+        return _legacy_model()
+    return _build(spec)
+
+
+def resolved_spec(role: str = "default") -> str:
+    """Fully qualified spec a role will actually run on, legacy path included."""
+    spec = spec_for(role)
+    if spec is not None:
+        return spec
     if _provider() == "gemini":
-        return os.environ.get("ADK_GEMINI_MODEL", DEFAULT_GEMINI_MODEL)
-    return os.environ.get("OPENAI_MODEL", DEFAULT_OPENAI_MODEL)
+        return f"gemini-native/{os.environ.get('ADK_GEMINI_MODEL', DEFAULT_GEMINI_MODEL)}"
+    return f"openai/{os.environ.get('OPENAI_MODEL', DEFAULT_OPENAI_MODEL)}"
+
+
+def bare_model_name(spec: str) -> str:
+    """Last path segment of a spec, e.g. 'openrouter/openai/gpt-5.4' → 'gpt-5.4'.
+
+    This is the form ``telemetry.price_for`` looks up.
+    """
+    name = (spec or "").strip()
+    return name.rsplit("/", 1)[-1] if "/" in name else name
+
+
+def active_model_name(role: str = "default") -> str:
+    """Bare model name for a role, e.g. 'gpt-5.4'. Used by telemetry to price a call."""
+    return bare_model_name(resolved_spec(role))
+
+
+def model_name_of(agent: Any) -> str:
+    """Bare model name an already-built agent is holding.
+
+    Telemetry prices from this rather than from the env, because with per-role
+    routing the env no longer says which model a given agent got — reading it
+    back off the agent is the only way the cost line matches the call. Falls back
+    to the default role if the agent shape is unexpected.
+    """
+    model = getattr(agent, "model", None)
+    name = getattr(model, "model", None)
+    if not name and isinstance(model, str):
+        name = model
+    if not name:
+        return active_model_name()
+    return bare_model_name(str(name))
+
+
+def routing_table() -> dict[str, str]:
+    """role → fully qualified spec, for every role."""
+    return {role: resolved_spec(role) for role in ROLES}
+
+
+def routing_label() -> str:
+    """One-line summary of the active routing, for the startup log.
+
+    Collapses to ``all=<spec>`` when every role shares a model, so the common
+    unrouted case stays a short line.
+    """
+    table = routing_table()
+    distinct = set(table.values())
+    if len(distinct) == 1:
+        return f"all={distinct.pop()} (max_tokens={_max_tokens()})"
+    grouped: dict[str, list[str]] = {}
+    for role, spec in table.items():
+        grouped.setdefault(spec, []).append(role)
+    parts = [f"{spec}←{'+'.join(roles)}" for spec, roles in sorted(grouped.items())]
+    return f"{'; '.join(parts)} (max_tokens={_max_tokens()})"
 
 
 def model_label() -> str:
     """Human-readable description of the active model, for logs."""
-    provider = _provider()
-    if provider == "gemini":
-        return f"gemini:{os.environ.get('ADK_GEMINI_MODEL', DEFAULT_GEMINI_MODEL)}"
-    model = os.environ.get("OPENAI_MODEL", DEFAULT_OPENAI_MODEL)
-    return f"openai:{model} (max_tokens={_max_tokens()})"
+    return routing_label()
