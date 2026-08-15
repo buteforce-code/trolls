@@ -402,6 +402,198 @@ textarea.input { resize: vertical; min-height: 104px; line-height: 1.6; }
 }
 .dot--lg { width: 9px; height: 9px; }
 
+/* ══ Chart legends ════════════════════════════════════════════════════════ */
+/* Legends were a 3px hairline dash with --ink-mute text at .42 opacity when
+   dimmed — below the contrast floor and effectively invisible, which made the
+   charts read as decoration rather than as controls you can click. A legend on
+   these pages is interactive (isolate, pin, toggle), so it is styled as the
+   control it is. */
+.chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  list-style: none;
+}
+
+.legend-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+  padding: 5px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--r-pill);
+  background: var(--surface-sunk);
+  color: var(--ink-2);
+  transition: background var(--t-fast) var(--ease-move),
+              border-color var(--t-fast) var(--ease-move),
+              opacity var(--t-fast) var(--ease-move);
+}
+.legend-key:hover { background: var(--chip); border-color: var(--line-strong); }
+.legend-key[data-off='true'] { opacity: .5; background: transparent; }
+.legend-key[data-off='true'] .legend-swatch { background: var(--ink-faint) !important; }
+.legend-key[aria-pressed='true'][data-pinned='true'] { border-color: var(--lav); background: var(--lav-tint); }
+
+/* A block, not a hairline: at 3px tall a colour key cannot be matched to a
+   curve at a glance, which is the only thing a legend is for. */
+.legend-swatch {
+  width: 11px;
+  height: 11px;
+  border-radius: 3px;
+  flex: none;
+}
+.legend-label { font-weight: 600; color: var(--ink-2); }
+.legend-value {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  color: var(--ink-3);
+}
+.legend-meta { color: var(--ink-3); font-variant-numeric: tabular-nums; }
+
+/* ══ Notifications ════════════════════════════════════════════════════════ */
+.notif-wrap { position: relative; display: inline-flex; }
+
+.notif-panel {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  z-index: 60;
+  width: min(360px, calc(100vw - 36px));
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
+  animation: pop-in var(--t-fast) var(--ease-out) both;
+}
+@keyframes pop-in {
+  from { opacity: 0; transform: translateY(-6px) scale(.98); }
+  to   { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .notif-panel { animation: none; }
+}
+
+.notif-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 13px 16px;
+  border-bottom: 1px solid var(--line);
+}
+.notif-title { font-weight: 700; font-size: var(--text-md); color: var(--ink); }
+
+.notif-empty {
+  padding: 20px 16px;
+  font-size: var(--text-base);
+  line-height: 1.6;
+  color: var(--ink-3);
+}
+
+.notif-list { list-style: none; max-height: min(58vh, 420px); overflow-y: auto; }
+
+.notif-item {
+  display: flex;
+  gap: 11px;
+  align-items: flex-start;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line-hair);
+  transition: background var(--t-fast) var(--ease-move);
+}
+.notif-item:hover { background: var(--surface-sunk); }
+.notif-item .dot { margin-top: 5px; }
+.notif-item-text { min-width: 0; display: block; line-height: 1.45; }
+.notif-item-head {
+  display: block;
+  font-size: var(--text-sm);
+  font-weight: 700;
+  color: var(--ink);
+}
+.notif-item-title {
+  display: block;
+  font-size: var(--text-base);
+  color: var(--ink-2);
+  margin-top: 2px;
+  /* Two lines then ellipsis: a headline is the identifier here, and one
+     truncated line loses which post it is. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.notif-item-detail {
+  display: block;
+  font-size: var(--text-xs);
+  color: var(--ink-mute);
+  margin-top: 3px;
+}
+
+.notif-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--lav-ink);
+  background: var(--surface-sunk);
+  transition: background var(--t-fast) var(--ease-move);
+}
+.notif-foot:hover { background: var(--lav-tint); }
+
+/* ══ Lane bar ═════════════════════════════════════════════════════════════ */
+/* The header of a filtered lane. Deliberately one shallow row: it replaces the
+   overview blocks that used to sit above the cards, and a tall replacement
+   would have solved nothing. */
+.lane-bar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+  padding: 12px 16px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-xl);
+}
+.lane-bar-count { display: inline-flex; align-items: baseline; gap: 7px; }
+.lane-bar-n { font-weight: 700; font-size: 21px; letter-spacing: -.03em; color: var(--ink); }
+.lane-bar-rule {
+  width: 1px;
+  align-self: stretch;
+  background: var(--line);
+  margin-inline: 2px;
+}
+@media (max-width: 720px) {
+  .lane-bar-rule { display: none; }
+}
+
+.lane-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  padding: 5px 12px;
+  border-radius: var(--r-pill);
+  background: var(--chip);
+  color: var(--ink-3);
+  transition: background var(--t-fast) var(--ease-move),
+              color var(--t-fast) var(--ease-move);
+}
+.lane-chip:hover { background: #E7E3F4; color: var(--ink); }
+.lane-chip[data-active='true'] { background: var(--lav-tint); color: var(--lav-ink); }
+.lane-chip-n {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  opacity: .62;
+}
+.lane-chip[data-active='true'] .lane-chip-n { opacity: 1; }
+
 /* ══ Tabs ═════════════════════════════════════════════════════════════════ */
 .tabs { display: flex; gap: 8px; flex-wrap: wrap; }
 .tab {

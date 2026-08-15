@@ -1,11 +1,12 @@
 'use client'
 
-import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { num, relative } from '../../lib/format'
+import { usePoll } from '../../lib/use-poll'
 import { PageHeader, EmptyState } from '../../components/ui/page-header'
 import { PosteriorChart, type Arm } from '../../components/insights/posterior-chart'
 import { CalibrationChart, type CalibrationBucket } from '../../components/insights/calibration-chart'
+import { HistoryChart, type Snapshot } from '../../components/insights/history-chart'
 
 interface PostScore {
   slug: string
@@ -51,6 +52,8 @@ interface LearningPayload {
   arms: Arm[]
   posts: PostScore[]
   ranking: Decision[]
+  /** One row per `--learn` run, oldest first. The engine's own history. */
+  snapshots: Snapshot[]
   calibration: { buckets: CalibrationBucket[]; brier: number | null; n: number }
   formats: { format: string; total: number; published: number }[]
   scout: {
@@ -69,22 +72,22 @@ const COMPONENT_COLOURS: Record<string, string> = {
   engagement: 'var(--rose)',
 }
 
-export default function LearningPage() {
-  const [data, setData] = useState<LearningPayload | null>(null)
-  const [error, setError] = useState<string | null>(null)
+/**
+ * The learning report refreshes on a slow poll rather than once on mount.
+ *
+ * `--learn` runs nightly after the analytics ingest, so there is no fast-moving
+ * state here and a 3s poll would be pure waste. A minute is enough that a tab
+ * left open overnight shows this morning's run instead of yesterday's, which is
+ * the actual failure a one-shot fetch produced.
+ */
+const REFRESH_MS = 60_000
 
-  useEffect(() => {
-    let cancelled = false
-    fetch('/api/learning', { headers: { accept: 'application/json' } })
-      .then(async res => {
-        if (res.status === 401) { window.location.reload(); return null }
-        if (!res.ok) throw new Error(String(res.status))
-        return res.json()
-      })
-      .then(payload => { if (payload && !cancelled) setData(payload as LearningPayload) })
-      .catch(err => { if (!cancelled) setError(err instanceof Error ? err.message : 'failed') })
-    return () => { cancelled = true }
-  }, [])
+export default function LearningPage() {
+  const { data, error } = usePoll<LearningPayload>(
+    '/api/learning',
+    () => false,
+    { activeMs: REFRESH_MS, idleMs: REFRESH_MS },
+  )
 
   if (error) {
     return (
@@ -128,6 +131,8 @@ export default function LearningPage() {
   }
 
   const { status, arms, posts, ranking, calibration, formats, scout } = data
+  const snapshots = data.snapshots ?? []
+  const toMaturity = Math.max(0, status.threshold - status.matured)
   const scoreMax = Math.max(1, ...posts.map(p => Number(p.outcome_score ?? 0)))
   const formatMax = Math.max(1, ...formats.map(f => f.total))
   const publishedTotal = formats.reduce((a, f) => a + f.published, 0)
@@ -165,15 +170,36 @@ export default function LearningPage() {
         </div>
 
         {status.mode !== 'active' && (
-          <p className="t-sm muted" style={{ marginTop: 16, lineHeight: 1.6 }}>
+          <p className="t-sm" style={{ marginTop: 16, lineHeight: 1.6, color: 'var(--ink-3)' }}>
             The engine is recording what it would choose. Everything below is a live belief — it is
-            just not being acted on yet.
+            just not being acted on yet.{' '}
+            {toMaturity > 0
+              ? `${toMaturity} more matured post${toMaturity === 1 ? '' : 's'} before it may steer.`
+              : status.bandiActive
+                ? ''
+                : 'It has the data it needs — steering is held by the LEARN_BANDIT_ACTIVE flag, '
+                  + 'which is a decision, not a fault.'}
           </p>
         )}
       </section>
 
-      {arms.length > 0 && (
+      {snapshots.length > 0 && (
         <section className="card rise mb-22" style={{ '--i': 1 } as React.CSSProperties}>
+          <div className="row wrap gap-18" style={{ justifyContent: 'space-between', marginBottom: 6 }}>
+            <div>
+              <h2 className="section-title">How the belief has moved</h2>
+              <p className="section-note">
+                One point per learning run. This is the only chart here that shows change over
+                time — everything else is what the engine believes right now.
+              </p>
+            </div>
+          </div>
+          <HistoryChart snapshots={snapshots} threshold={status.threshold} />
+        </section>
+      )}
+
+      {arms.length > 0 && (
+        <section className="card rise mb-22" style={{ '--i': 2 } as React.CSSProperties}>
           <h2 className="section-title">What the engine believes</h2>
           <p className="section-note mb-18">
             One curve per arm — a content cluster paired with where its topics came from. A tall
@@ -294,14 +320,16 @@ export default function LearningPage() {
               )
             })}
           </ul>
-          <div className="row wrap" style={{ gap: 16, marginTop: 14 }}>
+          <ul className="chart-legend" style={{ marginTop: 14 }}>
             {Object.entries(COMPONENT_COLOURS).map(([key, colour]) => (
-              <span key={key} className="row gap-6 t-xs" style={{ color: 'var(--ink-mute)' }}>
-                <span aria-hidden="true" style={{ width: 9, height: 9, borderRadius: 3, background: colour }} />
-                {key}
-              </span>
+              <li key={key}>
+                <span className="legend-key" style={{ cursor: 'default' }}>
+                  <span className="legend-swatch" style={{ background: colour }} aria-hidden="true" />
+                  <span className="legend-label">{key}</span>
+                </span>
+              </li>
             ))}
-          </div>
+          </ul>
         </section>
       )}
 

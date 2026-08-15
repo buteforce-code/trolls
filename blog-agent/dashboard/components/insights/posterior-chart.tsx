@@ -176,40 +176,38 @@ export function PosteriorChart({ arms }: { arms: readonly Arm[] }) {
         </p>
       </div>
 
-      <ul className="isolate row wrap" style={{ gap: '6px 20px', marginTop: 14, listStyle: 'none' }}>
+      <ul className="chart-legend" style={{ marginTop: 14 }}>
         {arms.map((arm, i) => {
           const dimmed = focus !== null && focus !== i
+          const colour = COLOURS[i % COLOURS.length]
           return (
             <li key={arm.arm}>
               <button
                 type="button"
-                className="isolate-item row gap-8"
+                className="legend-key"
                 aria-pressed={pinned === i}
+                data-pinned={pinned === i}
+                data-off={dimmed}
                 onMouseEnter={() => setHovered(i)}
                 onMouseLeave={() => setHovered(null)}
                 onFocus={() => setHovered(i)}
                 onBlur={() => setHovered(null)}
                 onClick={() => setPinned(pinned === i ? null : i)}
-                style={{
-                  background: 'none', border: 0, font: 'inherit', cursor: 'pointer',
-                  fontSize: 'var(--text-sm)', opacity: dimmed ? 0.42 : 1,
-                  padding: '5px 8px', margin: '-5px -8px', borderRadius: 9,
-                }}
               >
-                <span
-                  aria-hidden="true"
-                  style={{ width: 14, height: 3, borderRadius: 2, background: COLOURS[i % COLOURS.length] }}
-                />
-                <span className="mono" style={{ color: 'var(--ink-2)' }}>{arm.arm}</span>
-                <span style={{ color: 'var(--ink-mute)' }}>
-                  {asPercent(n(arm.mean))} ({asPercent(n(arm.ci_low))}–{asPercent(n(arm.ci_high))}) · n={n(arm.trials).toFixed(1)}
+                <span className="legend-swatch" style={{ background: colour }} aria-hidden="true" />
+                <span className="mono legend-label">{arm.arm}</span>
+                <span className="legend-value" style={{ color: dimmed ? undefined : colour }}>
+                  {asPercent(n(arm.mean))}
+                </span>
+                <span className="legend-meta t-xs">
+                  {asPercent(n(arm.ci_low))}–{asPercent(n(arm.ci_high))} · n={n(arm.trials).toFixed(1)}
                 </span>
               </button>
             </li>
           )
         })}
       </ul>
-      <p className="t-xs faint" style={{ marginTop: 10 }}>
+      <p className="t-xs" style={{ marginTop: 10, color: 'var(--ink-3)' }}>
         Hover an arm to isolate it · click to pin
         {clipped && ' · the vertical scale is clipped, so an arm with almost no evidence does not flatten the rest'}
       </p>
