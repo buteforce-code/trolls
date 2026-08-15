@@ -105,7 +105,11 @@ button, input, textarea, select { font: inherit; color: inherit; }
 .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 
 /* ── Page headers, shared by every view ───────────────────────────────────── */
-.page-head { position: relative; margin-bottom: 26px; }
+/* `z-index` is load-bearing, not cosmetic: the header carries the notifications
+   popover, and every card below it uses `.rise`, whose transform animation
+   creates a stacking context. Without a z-index here the header stays at
+   `auto` and later siblings paint over the open panel. */
+.page-head { position: relative; z-index: 30; margin-bottom: 26px; }
 .page-head h1 {
   font-family: var(--font-display);
   font-size: var(--text-h1);

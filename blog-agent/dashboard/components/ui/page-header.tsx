@@ -1,3 +1,5 @@
+import { NotificationBell } from '../shell/notification-bell'
+
 interface PageHeaderProps {
   title: string
   subtitle?: React.ReactNode
@@ -13,6 +15,10 @@ interface PageHeaderProps {
  *
  * The aurora is the app's only decorative element. It is `aria-hidden`, sits at
  * z-index 0 under live text, and is removed entirely under reduced motion.
+ *
+ * The bell lives here rather than in each page's `actions` so that "something
+ * needs you" is reachable from every view. It used to sit on the board alone,
+ * which is the one page where the operator was already looking at the work.
  */
 export function PageHeader({ title, subtitle, actions, ambient = true }: PageHeaderProps) {
   return (
@@ -23,7 +29,10 @@ export function PageHeader({ title, subtitle, actions, ambient = true }: PageHea
           <h1 className={ambient ? 'sheen' : undefined}>{title}</h1>
           {subtitle && <p>{subtitle}</p>}
         </div>
-        {actions && <div className="row wrap gap-12">{actions}</div>}
+        <div className="row wrap gap-12">
+          <NotificationBell />
+          {actions}
+        </div>
       </div>
     </header>
   )
