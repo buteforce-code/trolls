@@ -148,7 +148,17 @@ class BrandProfile:
 
     # ── Gate-half evidence ────────────────────────────────────────────────────────────────
     proof_points: tuple[ProofPoint, ...] = ()
+    # Every known rival, flattened. This is what the gate matches a draft's table against.
+    # Derived from `competitors_by_cluster` when that is supplied — see `from_dict`.
     competitors: tuple[str, ...] = ()
+    # Rivals grouped by the cluster taxonomy in `swarm/learning/scorer.py`. The writer is shown
+    # only the group matching the post's own cluster: a document-AI post that gets handed
+    # machine-vision vendors either writes a table about the wrong market or invents names, and
+    # inventing names is the one thing the gate cannot forgive.
+    competitors_by_cluster: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    # canonical name → other spellings of the SAME vendor. Aliases let the gate recognise a
+    # draft that wrote "AWS Textract" while still counting that vendor once.
+    competitor_aliases: dict[str, tuple[str, ...]] = field(default_factory=dict)
     banned_adjectives_extra: tuple[str, ...] = ()
 
     thresholds: GateThresholds = field(default_factory=GateThresholds)
@@ -168,6 +178,67 @@ class BrandProfile:
     def found_proof_points(self, text: str) -> list[str]:
         """Labels of every proof point this text actually carries."""
         return [p.label for p in self.proof_points if p.matches(text)]
+
+    # ── Competitors ───────────────────────────────────────────────────────────────────────
+    def competitors_for(self, cluster: str | None = None) -> tuple[str, ...]:
+        """The rivals a buyer for *this* cluster is really choosing between.
+
+        Falls back to the full list when the cluster is unknown or has no group, so a new
+        cluster degrades to "too many names" rather than to none — a writer given the wrong
+        shortlist still writes a real table; a writer given nothing invents one.
+        """
+        if cluster:
+            group = self.competitors_by_cluster.get(cluster)
+            if group:
+                return tuple(group)
+        return self.competitors
+
+    def competitor_shortlist(self, cluster: str | None = None, limit: int = 14) -> tuple[str, ...]:
+        """Names to show a writer.
+
+        With a cluster, the rivals for that market. Without one — the writer agent's system
+        instruction is built once at startup, before any topic exists — a spread across every
+        cluster rather than the head of the flat list, which is entirely machine-vision vendors
+        and would aim every document-AI post at the wrong market.
+        """
+        if cluster:
+            return self.competitors_for(cluster)[:limit]
+        if not self.competitors_by_cluster:
+            return self.competitors[:limit]
+
+        groups = list(self.competitors_by_cluster.values())
+        spread: dict[str, str] = {}
+        depth = 0
+        while len(spread) < limit and any(depth < len(g) for g in groups):
+            for group in groups:
+                if depth < len(group) and len(spread) < limit:
+                    spread.setdefault(group[depth].lower(), group[depth])
+            depth += 1
+        return tuple(spread.values())
+
+    def canonical_competitor(self, name: str) -> str:
+        """The preferred spelling for a vendor, given any of its known aliases."""
+        folded = name.strip().lower()
+        for canonical, aliases in self.competitor_aliases.items():
+            if folded == canonical.lower() or any(folded == a.lower() for a in aliases):
+                return canonical
+        return name
+
+    def named_competitors(self, text: str) -> list[str]:
+        """Distinct vendors this text actually names, canonicalised and case-folded.
+
+        Counting distinct *vendors* rather than distinct matched strings is the point. The
+        registry used to carry both "Omron" and "OMRON"; a table naming Omron once matched
+        both and scored two competitors, passing a gate it should have failed.
+        """
+        haystack = text.lower()
+        found: dict[str, str] = {}
+        for name in self.competitors:
+            spellings = (name, *self.competitor_aliases.get(name, ()))
+            if any(s.lower() in haystack for s in spellings):
+                canonical = self.canonical_competitor(name)
+                found.setdefault(canonical.lower(), canonical)
+        return sorted(found.values())
 
     @property
     def hosts(self) -> frozenset[str]:
@@ -238,6 +309,10 @@ def _profiles_dir() -> Path:
 def from_dict(data: dict, *, slug: str = "") -> BrandProfile:
     """Build a profile from the JSON payload. Unknown keys are rejected, not ignored —
     a typo'd key would otherwise silently drop a client's real positioning."""
+    # JSON has no comment syntax, and the competitor registry needs explaining to whoever
+    # edits it next. Underscore-prefixed keys are documentation and never reach the profile.
+    data = {k: v for k, v in data.items() if not k.startswith("_")}
+
     known = {f for f in BrandProfile.__dataclass_fields__}
     unknown = set(data) - known
     if unknown:
@@ -256,10 +331,37 @@ def from_dict(data: dict, *, slug: str = "") -> BrandProfile:
 
     thresholds = GateThresholds(**data.get("thresholds", {}))
 
+    by_cluster = {
+        cluster: tuple(names)
+        for cluster, names in (data.get("competitors_by_cluster") or {}).items()
+    }
+    aliases = {
+        canonical: tuple(spellings)
+        for canonical, spellings in (data.get("competitor_aliases") or {}).items()
+    }
+
+    # The flat list the gate matches against is derived from the groups unless a profile
+    # states it explicitly. Deriving it is what stops the two from drifting: a rival added to
+    # a cluster for the writer would otherwise be a rival the gate still refuses to recognise.
+    flat = tuple(data.get("competitors", ()))
+    if not flat and by_cluster:
+        seen: dict[str, str] = {}
+        for names in by_cluster.values():
+            for name in names:
+                seen.setdefault(name.lower(), name)
+        flat = tuple(seen.values())
+
+    dicts = ("competitors_by_cluster", "competitor_aliases")
     tuples = ("internal_hosts", "do_not_name", "competitors", "banned_adjectives_extra")
     payload = {
-        **{k: v for k, v in data.items() if k not in {"proof_points", "thresholds", *tuples}},
-        **{k: tuple(data.get(k, ())) for k in tuples},
+        **{
+            k: v for k, v in data.items()
+            if k not in {"proof_points", "thresholds", *tuples, *dicts}
+        },
+        **{k: tuple(data.get(k, ())) for k in tuples if k != "competitors"},
+        "competitors": flat,
+        "competitors_by_cluster": by_cluster,
+        "competitor_aliases": aliases,
         "proof_points": points,
         "thresholds": thresholds,
     }

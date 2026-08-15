@@ -53,27 +53,74 @@
     }
   ],
 
-  "competitors": [
-    "Cognex", "Keyence", "Omron", "OMRON", "Landing AI", "SwitchOn", "Instrumental",
-    "Matroid", "Maddox.ai", "Overview.ai", "Siemens", "NVIDIA",
-    "Kritikal Solutions", "XIS.ai", "Jidoka", "Detect Technologies", "Assert AI",
-    "Wobot.ai", "Intello Labs", "ParallelDots", "Cogniphi", "Attentive.ai", "SoftmaxAI",
-    "Optomech", "Indus Vision", "iFactory", "Binary Semantics", "ImageVision.ai",
+  "_competitors_note": [
+    "Keyed to the cluster taxonomy in swarm/learning/scorer.py (CLUSTER_RULES), so a topic's",
+    "cluster selects the rivals a buyer for THAT post is really comparing. The flat list the",
+    "GEO gate matches against is derived from every group — see brand.py. Do not add a name",
+    "here unless it is a real vendor a buyer would shortlist; the writer is shown these names",
+    "and told to put them in the comparison table, so a junk entry becomes a junk table.",
+    "A vendor may appear in more than one cluster."
+  ],
 
-    "Softlabs", "Quytech", "Kody Technolab", "Flexsin", "CreateBytes", "NextBrain",
+  "competitors_by_cluster": {
+    "manufacturing-cv": [
+      "Cognex", "Keyence", "Omron", "Landing AI", "SwitchOn", "Instrumental",
+      "Matroid", "Maddox.ai", "Overview.ai", "Siemens", "NVIDIA",
+      "Kritikal Solutions", "XIS.ai", "Jidoka", "Detect Technologies", "Assert AI",
+      "SoftmaxAI", "Optomech", "Indus Vision", "iFactory", "ImageVision.ai"
+    ],
 
-    "Nanonets", "Rossum", "Rillion", "Medius", "Tipalti", "KlearStack", "DocXtract",
-    "Turian", "Flowis", "Google Document AI", "Azure Document Intelligence",
-    "AWS Textract", "Amazon Textract", "Tesseract", "ABBYY", "Mistral OCR",
+    "retail-cv": [
+      "Wobot.ai", "Intello Labs", "ParallelDots", "Cogniphi", "Attentive.ai",
+      "Assert AI", "Cognex", "Keyence", "NVIDIA"
+    ],
 
-    "Crescendo", "ManyChat", "Botpress", "ORAI", "JoyzAI", "RealtyChatbot",
-    "VoiceGenie", "Aloware", "MindStudio", "Lindy", "Intuz",
+    "document-ai": [
+      "Nanonets", "Rossum", "Rillion", "Medius", "Tipalti", "KlearStack", "DocXtract",
+      "Turian", "Flowis", "Google Document AI", "Azure Document Intelligence",
+      "Amazon Textract", "Tesseract", "ABBYY", "Mistral OCR"
+    ],
 
-    "UiPath", "Automation Anywhere", "Zapier", "Make.com", "n8n",
-    "Accenture", "Infosys", "TCS", "Wipro", "LeewayHertz", "Appinventiv",
+    "ai-agents": [
+      "Crescendo", "ManyChat", "Botpress", "ORAI", "JoyzAI", "RealtyChatbot",
+      "VoiceGenie", "Aloware", "MindStudio", "Lindy", "Intuz"
+    ],
 
-    "Claude Code", "Codex", "Sarvam Code", "GitHub Copilot", "Cursor", "Windsurf",
-    "Devin", "Replit Agent", "Codeium", "Amazon Q Developer", "Tabnine", "Aider",
-    "Cline", "Google Jules"
-  ]
+    "automation": [
+      "UiPath", "Automation Anywhere", "Zapier", "Make.com", "n8n",
+      "Accenture", "Infosys", "TCS", "Wipro", "LeewayHertz", "Appinventiv"
+    ],
+
+    "dev-tools": [
+      "Claude Code", "Codex", "Sarvam Code", "GitHub Copilot", "Cursor", "Windsurf",
+      "Devin", "Replit Agent", "Codeium", "Amazon Q Developer", "Tabnine", "Aider",
+      "Cline", "Google Jules"
+    ],
+
+    "ecosystem": [
+      "Accenture", "Infosys", "TCS", "Wipro", "LeewayHertz", "Appinventiv",
+      "Kritikal Solutions", "Detect Technologies", "Binary Semantics", "Optomech"
+    ],
+
+    "other": [
+      "Softlabs", "Quytech", "Kody Technolab", "Flexsin", "CreateBytes", "NextBrain",
+      "Binary Semantics", "Intuz", "Appinventiv", "LeewayHertz"
+    ]
+  },
+
+  "_competitor_aliases_note": [
+    "Other names for the SAME vendor. They make the gate recognise a draft that used the other",
+    "spelling, without letting one vendor count twice toward the 2-competitor minimum — which",
+    "is exactly what the duplicate 'Omron'/'OMRON' entries used to do."
+  ],
+
+  "competitor_aliases": {
+    "Amazon Textract": ["AWS Textract"],
+    "Google Document AI": ["Google Cloud Document AI", "Document AI by Google"],
+    "Azure Document Intelligence": ["Azure Form Recognizer", "Microsoft Form Recognizer"],
+    "Automation Anywhere": ["AutomationAnywhere"],
+    "Make.com": ["Integromat"],
+    "GitHub Copilot": ["Copilot"],
+    "Claude Code": ["Anthropic Claude Code"]
+  }
 }

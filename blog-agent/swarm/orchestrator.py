@@ -42,9 +42,11 @@ from swarm.agents.imager import run_imaging
 from swarm.agents.linker import run_linking
 from swarm.agents.schema_ld import run_schema_ld
 from swarm.agents.social import run_social
+from swarm import brand
 from swarm import geo
 from swarm import guards
 from swarm import telemetry as tm
+from swarm.learning.scorer import cluster_for
 from swarm.telemetry_db import make_recorder
 
 if os.name == "nt":
@@ -352,6 +354,39 @@ _MIN_SECTION_GROWTH = 25
 # prompt-only ban on puffery was already in place and being ignored. So the
 # template is verified in the pipeline. See swarm/geo.py.
 _GEO_RETRIES = 1
+
+
+def _topic_tags(topic_id: str) -> list[str]:
+    """This topic's tags, or none. Never raises — the caller only needs them to pick a
+    competitor shortlist, and a missing tag list must not fail a write."""
+    try:
+        row = _db().table("topics").select("tags").eq("id", topic_id).limit(1).execute()
+        return (row.data[0].get("tags") or []) if row.data else []
+    except Exception:
+        return []
+
+
+def _competitor_brief(cluster: str | None) -> str:
+    """The exact vendor names this post's table may use.
+
+    The gate matches a draft's table against a closed list. The writer's system instruction
+    says so but is built before any topic exists, so without this block the writer is asked
+    to hit a vocabulary it has never been shown — which is precisely how a draft ends up
+    naming one recognised rival and being held for a human.
+    """
+    names = brand.active().competitor_shortlist(cluster)
+    if not names:
+        return ""
+    listed = "\n".join(f"  {name}" for name in names)
+    return (
+        "COMPARISON TABLE — THE ONLY VENDOR NAMES THAT COUNT\n"
+        f"This post is in the {cluster or 'general'} market. Your comparison table must name at "
+        "least two of these, spelled exactly as written:\n"
+        f"{listed}\n"
+        "Prefer the ones the research digest actually discusses. Other vendors may appear in "
+        "prose, but they do not count toward the table requirement and the post is blocked "
+        "without two from this list."
+    )
 
 
 def _body_word_count(mdx: str) -> int:
@@ -779,7 +814,9 @@ class BlogOrchestrator:
         print(f"[writer] Expansion brought the draft to {words} words.", flush=True)
         return draft
 
-    def _enforce_geo_template(self, draft: str, writer_prompt: str, topic_id: str) -> str:
+    def _enforce_geo_template(
+        self, draft: str, writer_prompt: str, topic_id: str, cluster: str | None = None
+    ) -> str:
         """Verify the answer-engine template; re-run the writer with a repair brief if it fails.
 
         Metadata (`author`, `dateModified`) is injected first so the audit sees the finished
@@ -793,7 +830,7 @@ class BlogOrchestrator:
         recorder = get_recorder()
         draft = geo.inject_metadata(draft)
         for attempt in range(1, _GEO_RETRIES + 1):
-            report = geo.audit(draft)
+            report = geo.audit(draft, cluster=cluster)
             if report.ok:
                 print(
                     f"  [geo] Template OK — {report.question_answers} quotable Q&A block(s); "
@@ -818,7 +855,7 @@ class BlogOrchestrator:
                 f"writer-{topic_id}-geo-{attempt}",
             ))
 
-        report = geo.audit(draft)
+        report = geo.audit(draft, cluster=cluster)
         if not report.ok:
             raise RuntimeError(
                 f"Draft still fails the GEO template after {_GEO_RETRIES} repair attempt(s): "
@@ -842,6 +879,12 @@ class BlogOrchestrator:
         print(f"\n[writer] Writing blog post...", flush=True)
         _update_status(slug, "writing")
 
+        # Which market this post is in, so the writer is shown the rivals its buyer is really
+        # comparing. The writer agent's system instruction is built once at startup and cannot
+        # know the topic, so the shortlist has to arrive with the per-topic prompt.
+        topic_tags = _topic_tags(topic_id)
+        cluster = cluster_for(topic_tags, title)
+
         # Fenced rather than interpolated raw: operator feedback is human input
         # arriving over HTTP, and it is being handed to the agent that writes to
         # the live site. See swarm/guards.py.
@@ -851,10 +894,11 @@ class BlogOrchestrator:
             f"Write a complete blog post based on this research digest:\n\n"
             f"{research_json}"
             f"{feedback_section}"
+            f"\n\n{_competitor_brief(cluster)}"
         )
         draft = _run(self.writer_agent, writer_prompt, f"writer-{topic_id}")
         draft = self._enforce_length(draft, writer_prompt, topic_id)
-        draft = self._enforce_geo_template(draft, writer_prompt, topic_id)
+        draft = self._enforce_geo_template(draft, writer_prompt, topic_id, cluster)
         print(f"[writer] Draft ready ({_body_word_count(draft)} words). Running humaniser...", flush=True)
 
         humaniser_prompt = (
@@ -888,9 +932,9 @@ class BlogOrchestrator:
             humanised = draft
         print(f"[writer] Humanised. Running imager...", flush=True)
 
-        # Fetch topic tags for the image planner
-        topic_row = _db().table("topics").select("tags").eq("id", topic_id).limit(1).execute()
-        tags: list[str] = (topic_row.data[0].get("tags") or []) if topic_row.data else []
+        # Already read above to pick the competitor shortlist; the image planner wants the
+        # same list, so reuse it rather than paying for a second round-trip.
+        tags: list[str] = topic_tags
         word_count_pre = _body_word_count(humanised)
 
         imaged_mdx, hero_image_url, images_meta = run_imaging(

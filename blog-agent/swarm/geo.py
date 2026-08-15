@@ -296,32 +296,43 @@ def _audit_proof_numbers(body: str, report: GeoReport, profile: BrandProfile) ->
         )
 
 
-def _audit_competitor_table(body: str, report: GeoReport, profile: BrandProfile) -> None:
+def _audit_competitor_table(
+    body: str, report: GeoReport, profile: BrandProfile, cluster: str | None = None
+) -> None:
     t = profile.thresholds
+    # Name the rivals for *this* post's market. A failure that says "you need two competitors"
+    # without saying which two is a failure the writer cannot act on — and the repair pass gets
+    # exactly one attempt, so an unactionable brief burns the whole retry.
+    candidates = profile.competitors_for(cluster)
+    suggestion = ", ".join(candidates[:6])
+
     tables = parse_tables(body)
     if not tables:
         report.failures.append(
             "No comparison table. Add one markdown table that compares the real options a buyer "
             f"is actually choosing between — at least {t.min_competitors_in_table} named "
-            f"competitors (e.g. {', '.join(profile.competitors[:4])}) alongside {profile.name}, "
-            f"across {t.min_table_body_rows}+ rows. Be accurate and fair about where they win; a "
+            f"competitors alongside {profile.name}, across {t.min_table_body_rows}+ rows. "
+            f"Use these exact names: {suggestion}. Be accurate and fair about where they win; a "
             "table that only flatters us gets read as a brochure and cited by nobody."
         )
         return
 
     for table in tables:
-        named = {c for c in profile.competitors if c.lower() in table.text.lower()}
+        named = profile.named_competitors(table.text)
         if len(named) >= t.min_competitors_in_table and len(table.rows) >= t.min_table_body_rows:
             return
 
     best = max(tables, key=lambda tb: len(tb.rows))
-    named = sorted({c for c in profile.competitors if c.lower() in best.text.lower()})
+    named = profile.named_competitors(best.text)
+    missing = [c for c in candidates if c not in named][:6]
     report.failures.append(
         f"The comparison table is not competitor-inclusive: its largest table has "
         f"{len(best.rows)} row(s) and names {len(named)} known competitor(s)"
         f"{' (' + ', '.join(named) + ')' if named else ''}. It needs "
         f"{t.min_competitors_in_table}+ real named competitors across {t.min_table_body_rows}+ "
-        "rows, with an honest column showing where each one is the better choice."
+        "rows, with an honest column showing where each one is the better choice. "
+        f"Add rows for these, spelled exactly like this: {', '.join(missing)}. "
+        "Only names from that list count — a real vendor the gate does not know still fails."
     )
 
 
@@ -355,11 +366,16 @@ def _audit_metadata(frontmatter: str, report: GeoReport) -> None:
             )
 
 
-def audit(mdx: str, *, profile: BrandProfile | None = None) -> GeoReport:
+def audit(
+    mdx: str, *, profile: BrandProfile | None = None, cluster: str | None = None
+) -> GeoReport:
     """Verify one finished post against the GEO template, for one brand.
 
     Pure function, no LLM. `profile` defaults to the active brand, so a single-tenant caller
     passes only the MDX; a multi-tenant one passes the tenant's profile explicitly.
+
+    `cluster` changes no pass/fail decision — it only narrows which rival names a failure
+    message suggests, so the repair brief proposes vendors from the post's own market.
     """
     profile = profile or brand.active()
     frontmatter, body = split_frontmatter(mdx)
@@ -367,7 +383,7 @@ def audit(mdx: str, *, profile: BrandProfile | None = None) -> GeoReport:
     report = GeoReport()
     _audit_question_answers(sections, report, profile)
     _audit_proof_numbers(body, report, profile)
-    _audit_competitor_table(body, report, profile)
+    _audit_competitor_table(body, report, profile, cluster)
     _audit_not_a_fit(sections, report, profile)
     _audit_metadata(frontmatter, report)
     return report
@@ -406,17 +422,26 @@ def inject_metadata(
 
 
 # ── Prompt half — injected into the writer ────────────────────────────────────────────────
-def template_rules(profile: BrandProfile | None = None) -> str:
+def template_rules(profile: BrandProfile | None = None, cluster: str | None = None) -> str:
     """The writer-facing half of the template, written for one brand.
 
     Derived from the SAME profile the gate reads, so the instructions and the enforcement
     cannot drift apart — which is what happened when the proof numbers lived in markdown for
     the prompt and in regexes for the gate.
+
+    `cluster` selects which rivals to name. Without it the writer was told a fixed vendor list
+    existed, told the gate checked against it, and never shown it — so it had to guess a closed
+    vocabulary. That is what held the FMCG draft that named only Infosys.
     """
     p = profile or brand.active()
     t = p.thresholds
     proof_line = " · ".join(p.proof_labels)
-    rival_examples = ", ".join(p.competitors[:2]) if len(p.competitors) >= 2 else "a named rival"
+
+    # Capped: the full registry is 84 names, and a wall of vendors buys nothing over a
+    # relevant shortlist while costing tokens on every writer call and every repair.
+    candidates = p.competitor_shortlist(cluster)
+    rival_list = "\n".join(f"     {name}" for name in candidates)
+    rival_examples = ", ".join(candidates[:2]) if len(candidates) >= 2 else "a named rival"
 
     return f"""
 === GEO TEMPLATE (NON-NEGOTIABLE — EVERY POST) ===
@@ -443,11 +468,17 @@ following before anything publishes, and a failure blocks the post. Build them i
 3. COMPETITOR-INCLUSIVE COMPARISON TABLE
    One markdown table comparing the options the buyer is really choosing between — at least
    {t.min_competitors_in_table} named competitors alongside {p.name}, {t.min_table_body_rows}+
-   rows. Use the ACTUAL rival names already sitting in the research digest — its summary,
-   key_facts and what_people_say name the products this post is about. Put those exact names in
-   the table; do not paraphrase into a category ("a SaaS platform", "other AI tools") and do not
-   invent a name the digest never mentioned. A gate checks the table against a fixed list of
-   known vendors, so an invented or paraphrased name fails even when the row is accurate.
+   rows.
+
+   THE GATE ONLY ACCEPTS THESE NAMES. Pick at least {t.min_competitors_in_table} from this
+   list and spell them exactly as written here:
+   {rival_list}
+
+   Prefer the ones the research digest actually discusses — its summary, key_facts and
+   what_people_say name the products this post is about. If the digest names a vendor that is
+   not on the list above, you may still discuss it in prose, but the table must also carry
+   {t.min_competitors_in_table}+ names from the list or the post is blocked. Do not paraphrase
+   into a category ("a SaaS platform", "other AI tools") and do not invent a vendor.
    Include a column that says honestly where each rival is the better choice — e.g.
    {rival_examples} beat us on off-the-shelf reliability. A table that only flatters {p.name} is
    a brochure and gets cited by nobody.

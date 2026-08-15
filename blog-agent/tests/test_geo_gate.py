@@ -13,6 +13,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from swarm import brand  # noqa: E402
 from swarm import geo  # noqa: E402
 
 
@@ -226,6 +227,72 @@ def test_table_without_named_competitors_fails() -> int:
     return 0
 
 
+def test_one_vendor_under_two_spellings_fails() -> int:
+    """Two spellings of one vendor is one competitor, not two.
+
+    The registry used to carry both "Omron" and "OMRON". A table naming Omron once matched
+    both entries and scored two competitors, so it passed the very check that had just
+    rejected an honest draft for naming only one.
+    """
+    one_vendor = _compliant().replace(TABLE, """
+| Option | Accuracy | Where it wins |
+|---|---|---|
+| Omron | High | Off-the-shelf reliability |
+| OMRON sensors | High | Sensor-level setup |
+| Buteforce custom YOLOv8 | 99.2% | Defects no catalogue model was trained on |
+""")
+    if geo.audit(one_vendor).ok:
+        _fail("a table naming one vendor under two spellings passed the 2-competitor minimum")
+        return 1
+    return 0
+
+
+def test_vendor_alias_is_recognised() -> int:
+    """A draft that wrote "AWS Textract" names Amazon Textract, and the gate must know it."""
+    named = brand.active().named_competitors("we benchmarked AWS Textract against Nanonets")
+    failures = 0
+    if "Amazon Textract" not in named:
+        _fail(f"alias 'AWS Textract' was not recognised — got {named}")
+        failures += 1
+    if "Nanonets" not in named:
+        _fail(f"'Nanonets' was not recognised — got {named}")
+        failures += 1
+    return failures
+
+
+def test_failure_message_names_candidates() -> int:
+    """A repair brief that does not say WHICH vendors to add cannot be acted on.
+
+    The pipeline allows exactly one repair attempt, so an unactionable brief burns it.
+    """
+    vague = _compliant().replace(TABLE, """
+| Option | Accuracy | Where it wins |
+|---|---|---|
+| Off-the-shelf tools | Medium | Cheap to start |
+| In-house build | Varies | Full control |
+| Buteforce | 99.2% | Custom defects |
+""")
+    report = geo.audit(vague, cluster="document-ai")
+    brief = " ".join(report.failures)
+    if "Nanonets" not in brief and "Rossum" not in brief:
+        _fail("the table failure suggests no vendor from the post's own cluster")
+        return 1
+    return 0
+
+
+def test_writer_is_shown_the_cluster_shortlist() -> int:
+    """The writer must SEE the closed vocabulary it is being graded against."""
+    failures = 0
+    rules = geo.template_rules(cluster="document-ai")
+    if "Nanonets" not in rules:
+        _fail("the document-AI writer prompt never names a document-AI vendor")
+        failures += 1
+    if "Cognex" in rules:
+        _fail("the document-AI writer prompt leaks machine-vision vendors")
+        failures += 1
+    return failures
+
+
 def test_two_row_table_fails() -> int:
     thin = _compliant().replace(TABLE, """
 | Option | Where it wins |
@@ -407,6 +474,10 @@ def main() -> int:
         ("live FMCG post fails the gate", test_live_fmcg_post_fails_the_gate),
         ("missing table fails", test_missing_table_fails),
         ("table without named competitors fails", test_table_without_named_competitors_fails),
+        ("one vendor under two spellings fails", test_one_vendor_under_two_spellings_fails),
+        ("vendor alias recognised", test_vendor_alias_is_recognised),
+        ("failure message names candidates", test_failure_message_names_candidates),
+        ("writer shown the cluster shortlist", test_writer_is_shown_the_cluster_shortlist),
         ("two-row table fails", test_two_row_table_fails),
         ("competitor in prose does not count", test_competitor_named_outside_a_table_does_not_count),
         ("AI coding-tool competitors recognised", test_ai_coding_tool_competitors_are_recognized),
