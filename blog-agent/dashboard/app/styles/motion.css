@@ -24,12 +24,6 @@
   70%  { box-shadow: 0 0 0 12px rgba(199,176,247,0); }
   100% { box-shadow: 0 0 0 0 rgba(199,176,247,0); }
 }
-@keyframes t-aurora {
-  0%   { transform: translate3d(-4%, 0, 0) scale(1); }
-  50%  { transform: translate3d(5%, -8%, 0) scale(1.12); }
-  100% { transform: translate3d(-4%, 0, 0) scale(1); }
-}
-@keyframes t-shine { 0% { background-position: -150% 0; } 100% { background-position: 250% 0; } }
 @keyframes t-draw  { to { stroke-dashoffset: 0; } }
 
 /* ══ Entrances ════════════════════════════════════════════════════════════
@@ -84,30 +78,32 @@
 /* ══ Ambience ═════════════════════════════════════════════════════════════
    One soft aurora behind each page title. It is the only purely atmospheric
    element in the app, it sits at z-index 0 behind live text, and it is the
-   first thing reduced-motion kills. */
+   first thing reduced-motion kills.
+
+   It used to drift on a 16s infinite loop. A blurred element under a permanent
+   transform keeps the compositor rasterising for as long as the tab is open —
+   on a control plane the operator leaves open all day, that is a battery cost
+   with no information in it. The wash is the part that was doing the work; the
+   movement was not. Static now.
+
+   `.sheen` used to live here too: an infinite sweep across the page title,
+   animating `background-position` through `background-clip: text`, which is not
+   compositable and forced a main-thread repaint plus a text re-raster every
+   frame, forever, on a page that is already polling. It was also the app's one
+   accessibility trap — `-webkit-text-fill-color: transparent` is not a property
+   the UA overrides in forced-colors mode, so the page title could render
+   invisible. DESIGN_BRIEF.md §8 says "don't decorate"; that one is gone. */
 .aurora {
   position: absolute;
   z-index: 0;
   pointer-events: none;
   filter: blur(46px);
   opacity: .62;
-  animation: t-aurora 16s ease-in-out infinite;
   background:
     radial-gradient(circle at 32% 42%, #D9C6FB, transparent 62%),
     radial-gradient(circle at 70% 58%, #C9EDE7, transparent 60%);
   width: 340px; height: 210px;
   left: -76px; top: -94px;
-}
-
-/* A single slow pass of light across the page title, once the view has settled. */
-.sheen {
-  background: linear-gradient(100deg, var(--ink) 32%, #6D4DE6 46%, var(--ink) 60%);
-  background-size: 250% 100%;
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
-  color: transparent;
-  animation: t-shine 5.5s ease-in-out 1.2s infinite;
 }
 
 /* Cursor-tracked highlight. `--mx/--my` are written by the shell's pointer
@@ -196,15 +192,27 @@
     animation-iteration-count: 1 !important;
     transition-duration: .01ms !important;
     scroll-behavior: auto !important;
+    /* `.rise` and `.fade-in` carry `animation-delay: calc(var(--i) * 40ms)`
+       with `fill-mode: both`. Zeroing duration without zeroing delay left a
+       card at `--i: 6` held invisible for 240ms, so the board still staggered
+       itself into existence one card at a time for the one person who asked it
+       not to. The delay is the stagger; it has to go too. */
+    animation-delay: 0s !important;
   }
   .aurora { display: none; }
-  .sheen {
-    background: none;
-    -webkit-text-fill-color: currentColor;
-    color: var(--ink);
-    animation: none;
-  }
   .spotlight::after { display: none; }
+
+  /* `.pulse` and `.ring` are the only signal that an agent is executing right
+     now. Zeroed, they collapse to a dot indistinguishable from an idle one —
+     the state disappears rather than the motion. So liveness moves from opacity
+     to a ring the element keeps at rest. (`.ring`'s own box-shadow is already
+     lavender; this matches it without needing the animation to run.) */
+  .pulse {
+    animation: none !important;
+    box-shadow: 0 0 0 3px var(--lav-tint), 0 0 0 4px var(--lav-deep);
+    border-radius: 50%;
+  }
+  .ring { animation: none !important; box-shadow: 0 0 0 4px var(--lav-tint); }
   .isolate:hover .isolate-item { opacity: 1; }
   .isolate .isolate-item:hover { transform: none; }
   .lift:hover, .card--interactive:hover, .list-row:hover { transform: none; }
@@ -212,3 +220,15 @@
      slowly, and it is the only survivor. */
   .spinner { animation: t-spin 1.6s linear infinite !important; }
 }
+
+/* The first and last marks in a 30-day chart sit within a tooltip's half-width
+   of the card edge, and `.main` is `overflow-x: clip` — so their labels were cut
+   off, on precisely the two bars an operator reaches for most (today, and the
+   start of the window). `[data-tip-edge]` re-anchors the bubble to that edge
+   instead of centring it; the chart sets it on its outermost marks. */
+.tip[data-tip-edge='start']::after { left: 0; transform: translate(0, 5px); }
+.tip[data-tip-edge='start']:hover::after,
+.tip[data-tip-edge='start']:focus-visible::after { transform: translate(0, 0); }
+.tip[data-tip-edge='end']::after { left: auto; right: 0; transform: translate(0, 5px); }
+.tip[data-tip-edge='end']:hover::after,
+.tip[data-tip-edge='end']:focus-visible::after { transform: translate(0, 0); }

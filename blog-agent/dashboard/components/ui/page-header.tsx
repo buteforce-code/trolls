@@ -5,7 +5,7 @@ interface PageHeaderProps {
   subtitle?: React.ReactNode
   /** Right-hand controls: filters, primary action, account. */
   actions?: React.ReactNode
-  /** The aurora + sheen treatment. On by default; off for dense sub-pages. */
+  /** The aurora wash behind the title. On by default; off for dense sub-pages. */
   ambient?: boolean
 }
 
@@ -26,7 +26,7 @@ export function PageHeader({ title, subtitle, actions, ambient = true }: PageHea
       {ambient && <div className="aurora" aria-hidden="true" />}
       <div className="page-head-row">
         <div style={{ position: 'relative', minWidth: 0 }}>
-          <h1 className={ambient ? 'sheen' : undefined}>{title}</h1>
+          <h1>{title}</h1>
           {subtitle && <p>{subtitle}</p>}
         </div>
         <div className="row wrap gap-12">

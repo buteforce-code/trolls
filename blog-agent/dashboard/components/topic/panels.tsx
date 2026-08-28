@@ -83,7 +83,7 @@ export function MonitorPanel({ digest, audit }: { digest: Digest | null; audit: 
 
       <div className="grid-halves" style={{ gap: 26 }}>
         <div>
-          <p className="t-sm" style={{ color: 'var(--ink-mute)', marginBottom: 10, fontWeight: 500 }}>Summary</p>
+          <h3 className="t-sm" style={{ color: 'var(--ink-mute)', marginBottom: 10, fontWeight: 500 }}>Summary</h3>
           <p style={{ fontSize: 'var(--text-md)', lineHeight: 1.65, marginBottom: 18, color: 'var(--ink-2)' }}>
             {digest.summary || digest.topic}
           </p>
@@ -107,7 +107,7 @@ export function MonitorPanel({ digest, audit }: { digest: Digest | null; audit: 
 
         {(digest.key_facts?.length ?? 0) > 0 && (
           <div>
-            <p className="t-sm" style={{ color: 'var(--ink-mute)', marginBottom: 10, fontWeight: 500 }}>Key facts</p>
+            <h3 className="t-sm" style={{ color: 'var(--ink-mute)', marginBottom: 10, fontWeight: 500 }}>Key facts</h3>
             <ul style={{ listStyle: 'none' }}>
               {digest.key_facts!.map((fact, i) => (
                 <li key={i} className="row gap-10" style={{ alignItems: 'flex-start', marginBottom: 12 }}>
@@ -127,9 +127,9 @@ export function MonitorPanel({ digest, audit }: { digest: Digest | null; audit: 
       {digest.what_people_say && (
         <>
           <hr className="divider" />
-          <p className="t-sm" style={{ color: 'var(--ink-mute)', marginBottom: 10, fontWeight: 500 }}>
+          <h3 className="t-sm" style={{ color: 'var(--ink-mute)', marginBottom: 10, fontWeight: 500 }}>
             What people are actually saying
-          </p>
+          </h3>
           <p style={{ fontSize: 'var(--text-md)', lineHeight: 1.65, color: 'var(--ink-2)' }}>
             {digest.what_people_say}
           </p>
@@ -139,9 +139,9 @@ export function MonitorPanel({ digest, audit }: { digest: Digest | null; audit: 
       {sources.length > 0 && (
         <>
           <hr className="divider" />
-          <p className="t-sm" style={{ color: 'var(--ink-mute)', marginBottom: 12, fontWeight: 500 }}>
+          <h3 className="t-sm" style={{ color: 'var(--ink-mute)', marginBottom: 12, fontWeight: 500 }}>
             Source signals
-          </p>
+          </h3>
           <div className="grid-cards" style={{ gap: 10 }}>
             {sources.map(([name, text]) => (
               <div key={name} className="card card--sunk" style={{ padding: '13px 15px', borderRadius: 'var(--r-md)' }}>

@@ -54,18 +54,27 @@ function Swarm() {
   const [events, setEvents] = useState<AgentEvent[]>([])
   const [eventsLoading, setEventsLoading] = useState(false)
 
+  // Keyed on the run id and nothing else. `selected` is derived from `data`,
+  // and `usePoll` hands back a freshly parsed object every 4s — so including it
+  // here re-fired this effect on every poll, blanking the roster back to
+  // `waiting`, replacing the stream with its loading state, and collapsing the
+  // panel from ~430px to ~40px before the refetch landed. On the one page whose
+  // whole job is watching a live run, that is the flicker DESIGN_BRIEF.md §7
+  // names as a hard constraint. Clearing is correct *here* because the effect
+  // now runs only when the operator actually picks a different run.
+  const runId = selected?.id ?? null
   useEffect(() => {
-    if (!selected) return
+    if (!runId) return
     let cancelled = false
     setEventsLoading(true)
     setEvents([])
-    fetch(`/api/swarm/${selected.id}`, { headers: { accept: 'application/json' } })
+    fetch(`/api/swarm/${runId}`, { headers: { accept: 'application/json' } })
       .then(r => (r.ok ? r.json() : null))
       .then(payload => { if (payload && !cancelled) setEvents(payload.events ?? []) })
       .catch(() => {})
       .finally(() => { if (!cancelled) setEventsLoading(false) })
     return () => { cancelled = true }
-  }, [selected?.id, selected])
+  }, [runId])
 
   const meters = useMemo(() => {
     const spend = data?.last24h.costUsd ?? 0

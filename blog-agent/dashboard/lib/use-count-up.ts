@@ -15,7 +15,12 @@ const DURATION_MS = 900
  *     real number immediately.
  */
 export function useCountUp(target: number): number {
-  const [value, setValue] = useState(() => target)
+  // Starts at 0, not at `target`. A StatCard only mounts once its data has
+  // loaded, so seeding the real number painted it, then the effect below drove
+  // it back to ~0 and counted up again — the operator saw `4 → 0 → 4`. The
+  // reduced-motion and later-change paths below still snap, so nothing else
+  // depends on the seed.
+  const [value, setValue] = useState(0)
   const hasAnimated = useRef(false)
   const frame = useRef<number>(0)
 

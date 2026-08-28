@@ -27,7 +27,19 @@
   /* Darkened from the original #8480A0 (2.6–3.8:1, fails WCAG 1.4.3) to clear
      4.5:1 against every surface it actually sits on, including --chip. */
   --ink-3:     #6C678A;
-  --ink-mute:  #9C99B0;
+  /* Darkened from #9C99B0 (2.76:1 white, 2.55:1 on --bg — fails WCAG 1.4.3
+     across all 41 usages, including every ::placeholder, every table header and
+     the "Auto-publishes in 3h" substatus on the topic hero). Now 5.09:1 white,
+     4.69:1 on --bg, 4.85:1 on --surface-sunk. */
+  --ink-mute:  #6F6B87;
+  /* NON-TEXT ONLY: dots, disabled swatches, chart gridlines, hairlines.
+     At 2.12:1 this cannot carry a glyph, and it does not need to — 1.4.11 asks
+     3:1 of state indicators, not 4.5:1. The ramp has no room for a text token
+     lighter than --ink-3: clearing 4.5:1 on --chip (the tightest surface any
+     secondary text lands on) already requires #6C678A. So `.faint` now resolves
+     to --ink-mute and this token stopped being a colour for words. That does
+     collapse one step of the grey ramp — a deliberate trade, because the step
+     it removes was never legible enough to read as a step. */
   --ink-faint: #B3B0C4;
 
   /* ── Lavender — the engine's own intent ─────────────────────────────────── */
@@ -37,6 +49,12 @@
   --lav-tint:  #F1EBFE;
   --lav-edge:  #E0D3FA;
   --lav-ink-2: #28184F;
+  /* Secondary text on a lavender ground. The veto card had been writing this
+     job as three separate literals — #7A6AA8 and #6A5A9A — and #7A6AA8 read at
+     4.05:1 on --lav-tint and 3.34:1 on --lav-edge, both failing WCAG 1.4.3 on
+     the two lines that say "Goes in 3h" and "until it publishes itself". This
+     clears 5.89:1 and 4.85:1 on those same grounds. */
+  --lav-ink-3: #5F5190;
 
   /* ── Teal — running, passed, healthy ────────────────────────────────────── */
   --teal:      #2BB3A3;

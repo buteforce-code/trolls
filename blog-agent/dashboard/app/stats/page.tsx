@@ -181,11 +181,11 @@ export default function StatsPage() {
               </p>
               <div className="row" style={{ gap: 30 }}>
                 <div>
-                  <div className="display" style={{ fontWeight: 700, fontSize: 26, color: '#C9C6D8' }}>0</div>
+                  <div className="display" style={{ fontWeight: 700, fontSize: 26, color: 'var(--ink-3)' }}>0</div>
                   <div className="t-sm muted" style={{ marginTop: 3 }}>total views</div>
                 </div>
                 <div>
-                  <div className="display" style={{ fontWeight: 700, fontSize: 26, color: '#C9C6D8' }}>0</div>
+                  <div className="display" style={{ fontWeight: 700, fontSize: 26, color: 'var(--ink-3)' }}>0</div>
                   <div className="t-sm muted" style={{ marginTop: 3 }}>last 7 days</div>
                 </div>
               </div>

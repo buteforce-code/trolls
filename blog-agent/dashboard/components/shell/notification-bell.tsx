@@ -136,12 +136,16 @@ export function NotificationBell() {
         className="icon-btn"
         aria-label={label}
         aria-expanded={open}
-        aria-haspopup="true"
+        aria-haspopup="dialog"
         onClick={() => setOpen(o => !o)}
       >
         <BellIcon />
         {count > 0 && <span className="icon-btn-badge" aria-hidden="true">{count}</span>}
       </button>
+      {/* The badge is `aria-hidden` and the button's own name only updates when
+          the button is re-read, so a count that changed under a poll was silent.
+          This announces the change itself, which is the part that matters. */}
+      <span className="sr-only" aria-live="polite">{label}</span>
 
       {open && (
         <div className="notif-panel" role="dialog" aria-label="Notifications">

@@ -164,7 +164,10 @@ function Board() {
       )}
 
       {isOverview ? (
-        <>
+        /* `.overview` is a plain block on desktop and a flex column below 760px,
+           where it re-orders its children so the veto card is the first thing on
+           the page. See the `.ov-pair` note in components.css. */
+        <div className="overview">
           <AutopilotStrip state={autopilot} queuedCount={queuedCount} onRan={refresh} />
 
           <div className="grid-stats mb-22">
@@ -201,7 +204,11 @@ function Board() {
             </section>
           )}
 
-          <div className="row wrap gap-22 mb-22" style={{ alignItems: 'flex-start' }}>
+          {/* The village is ten rows tall and the veto card is three buttons
+              tall, so `flex-start` left a third of this row empty. Stretch is
+              explicit rather than omitted: `.row` centres by default, which
+              would only split the same gap in two. */}
+          <div className="row wrap gap-22 mb-22 ov-pair" style={{ alignItems: 'stretch' }}>
             <GoingOutNext
               topic={nextOut}
               onFeedback={setFeedbackFor}
@@ -209,7 +216,7 @@ function Board() {
             />
             <Village topics={topics} />
           </div>
-        </>
+        </div>
       ) : (
         <>
           <LaneBar

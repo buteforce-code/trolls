@@ -12,6 +12,10 @@ interface ToastApi {
 const ToastContext = createContext<ToastApi>({ toast: () => {} })
 
 const VISIBLE_MS = 2600
+/* An error has to be read, not just noticed. "Could not publish — check the
+   server logs" at 2.6s is gone before a phone is even raised, and unlike a
+   confirmation there is no way to re-derive what it said from the screen. */
+const VISIBLE_ERROR_MS = 7000
 
 /**
  * One toast at a time, centred at the bottom, as in the design.
@@ -34,7 +38,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!current) return
     if (timer.current) clearTimeout(timer.current)
-    timer.current = setTimeout(() => setCurrent(null), VISIBLE_MS)
+    timer.current = setTimeout(() => setCurrent(null), current.tone === 'error' ? VISIBLE_ERROR_MS : VISIBLE_MS)
     return () => { if (timer.current) clearTimeout(timer.current) }
   }, [current])
 

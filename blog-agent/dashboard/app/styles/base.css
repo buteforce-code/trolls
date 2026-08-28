@@ -34,9 +34,16 @@ button, input, textarea, select { font: inherit; color: inherit; }
 ::selection { background: #E7DEFD; }
 
 /* Focus is never removed, only restyled — every interactive surface in this
-   app is reachable and visibly reachable by keyboard. */
+   app is reachable and visibly reachable by keyboard.
+
+   The ring is --lav-ink, not --lav. The tint reads at 1.91:1 on white and
+   1.76:1 on --bg, where outline-offset actually lands it: both fail WCAG 1.4.11,
+   which wants 3:1 for a state indicator. --lav ended up here because one token
+   was carrying three jobs — semantic "machine intent", decoration, and this —
+   and a colour picked to sit quietly behind text cannot also announce position.
+   --lav-ink is the same hue at 7.3:1 on white and 6.9:1 on --chip. */
 :focus-visible {
-  outline: 2px solid var(--lav);
+  outline: 2px solid var(--lav-ink);
   outline-offset: 2px;
   border-radius: 4px;
 }
@@ -100,7 +107,8 @@ button, input, textarea, select { font: inherit; color: inherit; }
 .t-sm    { font-size: var(--text-sm); }
 .t-base  { font-size: var(--text-base); }
 .muted   { color: var(--ink-3); }
-.faint   { color: var(--ink-faint); }
+/* --ink-faint is non-text (see tokens.css). Words go to the text-safe token. */
+.faint   { color: var(--ink-mute); }
 .pretty  { text-wrap: pretty; }
 .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 

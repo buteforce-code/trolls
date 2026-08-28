@@ -99,7 +99,15 @@ export default function TopicPage({ params }: { params: Promise<{ slug: string }
       } catch { /* the log file simply may not exist */ }
     }
     pull()
-    const timer = setInterval(pull, 3000)
+    // The comment above promised "only while something is running" and the code
+    // did not deliver it: a bare 3s interval kept hitting the logs endpoint for
+    // an archived topic left open in a background tab, forever. The record poll
+    // directly above already had this guard; the log poll never got it.
+    const timer = setInterval(() => {
+      if (document.visibilityState !== 'visible') return
+      const status = statusRef.current
+      if (status && (statusMeta(status).live || status === 'queued')) pull()
+    }, 3000)
     return () => { cancelled = true; clearInterval(timer) }
   }, [slug])
 

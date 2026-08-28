@@ -47,11 +47,14 @@ export function Sidebar() {
   const params = useSearchParams()
   const router = useRouter()
   const { toast } = useToast()
-  const { topics, counts } = usePipeline()
+  const { topics, counts, autopilot } = usePipeline()
 
   const [collapsed, setCollapsed] = useState(false)
   const [query, setQuery] = useState('')
   const searchRef = useRef<HTMLInputElement>(null)
+  /** Non-null while a keystroke is waiting to reach the URL. */
+  const pendingQuery = useRef<string | null>(null)
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Restore the rail's width preference. Read after mount, never during render,
   // so the server and first client paint agree.
@@ -68,7 +71,14 @@ export function Sidebar() {
   }, [])
 
   // Keep the field in step with the URL when the board is reached by a link.
-  useEffect(() => { setQuery(params.get('q') ?? '') }, [params])
+  // URL → input. Skipped while a debounced write is still pending, so the round
+  // trip can never overwrite what the operator is in the middle of typing.
+  useEffect(() => {
+    if (pendingQuery.current !== null) return
+    setQuery(params.get('q') ?? '')
+  }, [params])
+
+  useEffect(() => () => { if (searchTimer.current) clearTimeout(searchTimer.current) }, [])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -83,13 +93,25 @@ export function Sidebar() {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
+  /**
+   * The input updates on every keystroke; the URL does not. Each `router.replace`
+   * re-runs the board's filter and its lane grouping over every topic and pushes
+   * a history entry, so writing one per character made typing visibly stutter
+   * against the 3s poll. 200ms is below the threshold where the URL feels stale
+   * and well above a fast typist's inter-key gap.
+   */
   function submitSearch(value: string) {
     setQuery(value)
-    const next = new URLSearchParams()
-    if (value.trim()) next.set('q', value.trim())
-    const lane = params.get('lane')
-    if (lane && lane !== 'all') next.set('lane', lane)
-    router.replace(`/${next.toString() ? `?${next}` : ''}`, { scroll: false })
+    pendingQuery.current = value
+    if (searchTimer.current) clearTimeout(searchTimer.current)
+    searchTimer.current = setTimeout(() => {
+      pendingQuery.current = null
+      const next = new URLSearchParams()
+      if (value.trim()) next.set('q', value.trim())
+      const lane = params.get('lane')
+      if (lane && lane !== 'all') next.set('lane', lane)
+      router.replace(`/${next.toString() ? `?${next}` : ''}`, { scroll: false })
+    }, 200)
   }
 
   async function signOut() {
@@ -105,6 +127,18 @@ export function Sidebar() {
     key === 'all' ? topics.length : counts[key]
 
   const attention = counts.attention
+
+  // `counts.progress > 0` used to stand in for engine health. It is a fact about
+  // topics, not about the worker: this engine writes at most one post an hour, so
+  // idle is its normal state and a worker dead for weeks looked identical to a
+  // healthy one — while the dot pulsed regardless. Liveness now comes from when a
+  // background job last actually ran, measured against the engine's own cadence.
+  const lastRunAt = autopilot?.lastRun?.at ?? null
+  const gapHours = Math.max(autopilot?.gapHours ?? 24, 1)
+  const engineSilent = Boolean(autopilot?.enabled) && (
+    !lastRunAt || Date.now() - new Date(lastRunAt).getTime() > gapHours * 2 * 3_600_000
+  )
+  const engineBeating = Boolean(autopilot?.enabled) && !engineSilent
 
   return (
     <aside
@@ -158,7 +192,11 @@ export function Sidebar() {
             >
               <Icon />
               <span className="collapsible" aria-hidden="true">{label}</span>
-              <span className="collapsible nav-badge" aria-hidden="true">{countFor(countKey)}</span>
+              <span
+                className="collapsible nav-badge"
+                data-zero={countFor(countKey) === 0}
+                aria-hidden="true"
+              >{countFor(countKey)}</span>
             </Link>
           )
         })}
@@ -190,11 +228,16 @@ export function Sidebar() {
       <div className="side-card collapsible">
         <div className="row gap-8" style={{ marginBottom: 7 }}>
           <span
-            className="dot dot--lg pulse"
-            style={{ background: 'var(--lav-ink)', color: 'var(--lav-ink)' }}
+            className={`dot dot--lg${engineBeating ? ' pulse' : ''}`}
+            style={{
+              background: engineSilent ? 'var(--rose)' : 'var(--lav-ink)',
+              color: engineSilent ? 'var(--rose)' : 'var(--lav-ink)',
+            }}
             aria-hidden="true"
           />
-          <span className="side-card-title">{counts.progress ? 'Engine running' : 'Engine idle'}</span>
+          <span className="side-card-title">
+            {engineSilent ? 'Engine has gone quiet' : counts.progress ? 'Engine running' : 'Engine idle'}
+          </span>
         </div>
         <p className="side-card-body">
           {attention

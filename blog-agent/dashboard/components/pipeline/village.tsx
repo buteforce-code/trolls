@@ -103,7 +103,11 @@ export function Village({ topics }: { topics: readonly Topic[] }) {
         {GATES.map(gate => (
           <span key={gate.label} className={`chip ${gate.tone}`}>
             {gate.label}
-            <span style={{ fontWeight: 500, opacity: .72 }}>{gate.sub}</span>
+            {/* Weight, not `opacity: .72`. The chip already carries a tone
+                colour, so alpha multiplied that down to 2.76:1 on the grey gates
+                — a caption the operator is meant to read. Dropping to 500 while
+                the label stays 600 keeps the same subordination, legibly. */}
+            <span style={{ fontWeight: 500 }}>{gate.sub}</span>
           </span>
         ))}
       </div>

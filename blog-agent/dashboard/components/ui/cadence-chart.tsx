@@ -32,6 +32,11 @@ export function CadenceChart({ days, height = 172 }: CadenceChartProps) {
               key={d.date}
               className="tip"
               data-tip={label}
+              /* The outermost marks sit within half a tooltip of the card edge,
+                 and the page clips its overflow — so "Today", the bar most often
+                 pointed at, had its label cut in half. These two anchor to the
+                 edge instead of centring on the bar. */
+              data-tip-edge={i === 0 ? 'start' : i === days.length - 1 ? 'end' : undefined}
               style={{ flex: 1, display: 'flex', alignItems: 'flex-end', height: '100%', minWidth: 0 }}
             >
               <span className="sr-only">{label}</span>
@@ -44,7 +49,12 @@ export function CadenceChart({ days, height = 172 }: CadenceChartProps) {
                   margin: '0 auto',
                   height: d.count ? `${40 + (d.count / max) * 56}%` : 14,
                   borderRadius: 9,
-                  background: d.count >= 2 ? 'var(--lav-deep)' : d.count === 1 ? 'var(--lav)' : 'var(--chip)',
+                  /* A silent day drawn in --chip is 1.16:1 against the card —
+                     the gap this chart exists to reveal was very nearly
+                     invisible. --ink-faint clears 3:1 as a state indicator while
+                     staying obviously quieter than either lavender, so a run of
+                     silent days still reads as absence rather than as activity. */
+                  background: d.count >= 2 ? 'var(--lav-deep)' : d.count === 1 ? 'var(--lav)' : 'var(--ink-faint)',
                   '--i': i,
                 } as React.CSSProperties}
               />

@@ -141,7 +141,7 @@
 .side-card-body {
   font-size: var(--text-sm);
   line-height: 1.55;
-  color: #6A5A9A;
+  color: var(--lav-ink-3);
   margin: 7px 0 13px;
 }
 
@@ -205,14 +205,17 @@
   color: var(--ink);
   transition: border-color var(--t-base) var(--ease-move), background var(--t-base) var(--ease-move);
 }
-.search:focus { outline: none; border-color: var(--lav); background: var(--surface); }
+/* No `outline: none` here. At (0,2,0) it outranked the global :focus-visible
+   (0,1,0), so the only focus signal on the search field was a 1px border at
+   1.91:1 — the app claimed keyboard reachability it did not visibly deliver. */
+.search:focus { border-color: var(--lav-deep); background: var(--surface); }
 .search::placeholder { color: var(--ink-mute); }
 .kbd {
   position: absolute;
   right: 11px; top: 50%;
   transform: translateY(-50%);
   font-size: 11px;
-  color: var(--ink-faint);
+  color: var(--ink-3);  /* text on --tint: --ink-faint read 1.86:1 here */
   background: #F1EFF9;
   border-radius: var(--r-xs);
   padding: 3px 7px;
@@ -281,7 +284,9 @@
   min-width: 19px; height: 19px;
   padding: 0 5px;
   border-radius: var(--r-pill);
-  background: var(--rose);
+  /* --rose-ink, not --rose: white on --rose is 3.12:1, and this is a 10.5px
+     bold numeral — 1.4.3 wants 4.5:1. --rose-ink carries it at 6.5:1. */
+  background: var(--rose-ink);
   color: #fff;
   font-size: 10.5px;
   font-weight: 600;
@@ -310,7 +315,8 @@
   color: var(--ink);
   transition: border-color var(--t-base) var(--ease-move), background var(--t-base) var(--ease-move);
 }
-.input:focus { outline: none; border-color: var(--lav); background: var(--surface); }
+/* Same as .search:focus — the ring stays, the border just reinforces it. */
+.input:focus { border-color: var(--lav-deep); background: var(--surface); }
 .input::placeholder { color: var(--ink-mute); }
 textarea.input { resize: vertical; min-height: 104px; line-height: 1.6; }
 
@@ -392,7 +398,8 @@ textarea.input { resize: vertical; min-height: 104px; line-height: 1.6; }
    model-written sentence ("dedup risk — medium, overlaps with…"), which with
    `nowrap` runs straight out of its card. */
 .chip--wrap  { white-space: normal; text-align: left; line-height: 1.5; max-width: 100%; }
-.chip--dashed { border: 1px dashed var(--line-strong); opacity: .55; }
+/* Colour, not alpha: at .55 the roster's "waiting" label read 2.24:1. */
+.chip--dashed { border: 1px dashed var(--line-strong); color: var(--ink-3); }
 
 .dot {
   width: 6px; height: 6px;
@@ -432,7 +439,9 @@ textarea.input { resize: vertical; min-height: 104px; line-height: 1.6; }
               opacity var(--t-fast) var(--ease-move);
 }
 .legend-key:hover { background: var(--chip); border-color: var(--line-strong); }
-.legend-key[data-off='true'] { opacity: .5; background: transparent; }
+/* Still clickable, so 1.4.3's inactive-component exemption does not apply:
+   at .5 the label read 2.42:1 on a control the operator is meant to press. */
+.legend-key[data-off='true'] { color: var(--ink-3); background: transparent; }
 .legend-key[data-off='true'] .legend-swatch { background: var(--ink-faint) !important; }
 .legend-key[aria-pressed='true'][data-pinned='true'] { border-color: var(--lav); background: var(--lav-tint); }
 
@@ -590,9 +599,12 @@ textarea.input { resize: vertical; min-height: 104px; line-height: 1.6; }
 .lane-chip-n {
   font-variant-numeric: tabular-nums;
   font-weight: 700;
-  opacity: .62;
+  /* A colour, not `opacity: .62`. The count is information — it is half the
+     reason to click the chip — and alpha multiplied it down to 2.34:1. Opacity
+     is the most reliable way to ship failing text from a passing palette. */
+  color: var(--ink-3);
 }
-.lane-chip[data-active='true'] .lane-chip-n { opacity: 1; }
+.lane-chip[data-active='true'] .lane-chip-n { color: inherit; }
 
 /* ══ Tabs ═════════════════════════════════════════════════════════════════ */
 .tabs { display: flex; gap: 8px; flex-wrap: wrap; }
@@ -818,4 +830,161 @@ textarea.input { resize: vertical; min-height: 104px; line-height: 1.6; }
   box-shadow: var(--shadow-sm);
   position: relative;
   z-index: 1;
+}
+
+/* ══ Autonomy switch ══════════════════════════════════════════════════════
+   The one control on the board that changes what the engine does to the live
+   site, so it is drawn as an instrument rather than a settings-page toggle:
+   the track carries the state's own colour, and the label beside it says which
+   state that is in words. Colour follows the palette's meanings exactly —
+   rose when a human has to decide (review on), lavender when the engine is
+   acting on its own intent all the way to publish (review off). No third hue
+   is introduced; a switch that invented its own colour would be the only
+   element on the page whose colour meant nothing.
+
+   Sized off the control scale (.btn--sm is 38px) so it sits on the strip's
+   baseline without nudging the row taller. */
+.switch {
+  --switch-w: 46px;
+  --switch-h: 26px;
+  --switch-pad: 3px;
+  position: relative;
+  flex: none;
+  width: var(--switch-w);
+  height: var(--switch-h);
+  padding: 0;
+  border: 1px solid var(--lav-edge);
+  border-radius: var(--r-pill);
+  background: var(--lav-tint);
+  cursor: pointer;
+  transition:
+    background var(--t-base) var(--ease-move),
+    border-color var(--t-base) var(--ease-move);
+}
+/* aria-checked is the state, so it is also the selector — the DOM cannot drift
+   out of step with the paint the way a parallel `data-on` attribute could. */
+.switch[aria-checked='true'] {
+  background: var(--rose-tint);
+  border-color: var(--rose-edge);
+}
+.switch::after {
+  content: '';
+  position: absolute;
+  top: var(--switch-pad);
+  left: var(--switch-pad);
+  width: calc(var(--switch-h) - var(--switch-pad) * 2 - 2px);
+  height: calc(var(--switch-h) - var(--switch-pad) * 2 - 2px);
+  border-radius: 50%;
+  background: var(--lav-deep);
+  box-shadow: 0 2px 5px rgba(40, 30, 80, .28);
+  transition: transform var(--t-base) var(--ease-out), background var(--t-base) var(--ease-move);
+}
+.switch[aria-checked='true']::after {
+  background: var(--rose-ink);
+  transform: translateX(calc(var(--switch-w) - var(--switch-h)));
+}
+.switch:not(:disabled):hover { border-color: var(--lav); }
+.switch[aria-checked='true']:not(:disabled):hover { border-color: var(--rose); }
+.switch:disabled { cursor: not-allowed; opacity: .5; }
+
+/* The knob is the only thing that moves; with motion reduced it changes colour
+   and position without the slide, which still reads as a state change. */
+@media (prefers-reduced-motion: reduce) {
+  .switch, .switch::after { transition: none; }
+}
+
+/* The strip's own second line: state in words, then why it is that state. */
+.autonomy {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: var(--r-md);
+  background: var(--surface-sunk);
+  border: 1px solid var(--line);
+}
+.autonomy-state {
+  font-weight: 600;
+  font-size: var(--text-base);
+  color: var(--lav-ink);
+}
+.autonomy[data-review='on'] .autonomy-state { color: var(--rose-ink); }
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Mobile: the veto card comes first
+   --------------------------------------------------------------------------
+   DESIGN_BRIEF.md §9 asks that a phone answer two questions in three seconds:
+   is the engine healthy, and is anything about to publish that shouldn't. The
+   desktop board answers both. On a phone the same source order stacked the
+   header, the autopilot strip, four full-width stat cards and the cadence chart
+   — roughly 1,600px, two and a half screens — above the countdown, which §5
+   calls the highest-stakes interaction in the product.
+
+   `.ov-pair` holds the veto card and the village side by side on desktop. Below
+   760px it becomes `display: contents` so those two stop being one block and
+   become orderable siblings of everything else: the countdown hoists to the top
+   of the page, the village drops to the bottom, and nothing between them moves.
+   Ordering the wrapper instead would have dragged the ten-row village up with
+   it, which is how the countdown got buried in the first place.
+   ────────────────────────────────────────────────────────────────────────── */
+@media (max-width: 760px) {
+  .overview { display: flex; flex-direction: column; }
+
+  .ov-pair { display: contents; }
+  .ov-pair > :first-child { order: -1; margin-bottom: 22px; }
+  .ov-pair > :last-child  { order: 5; }
+
+  /* Four stat cards at one per row cost ~720px on their own. Two-up halves that
+     without shrinking the figures, which are the point of the cards. */
+  .grid-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+
+  /* The veto decision happens on a phone, so its controls get the full 44px
+     target rather than the desk-sized 38/32px. */
+  .btn--sm { min-height: 44px; }
+  .btn--xs { min-height: 40px; }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   The collapsed rail keeps its counts
+   --------------------------------------------------------------------------
+   `.collapsible` hides labels and badges alike below 900px, and sidebar.tsx
+   states why that is wrong: "the counts *are* the navigation — 'Needs review 3'
+   is both a label and the reason to click it." The screen-reader name kept them
+   (`aria-label` carries the number), but a sighted operator on a phone lost the
+   one signal that says which lane to open.
+
+   So the badge comes back as a corner numeral on the icon: small, tabular, and
+   only when there is something in the lane. Zero counts stay hidden — a rail
+   wearing five "0" chips is noise, and the brief is explicit that `queued` must
+   never look like a problem.
+   ────────────────────────────────────────────────────────────────────────── */
+@media (max-width: 900px) {
+  .sidebar .nav-item { position: relative; }
+  .sidebar .nav-item .nav-badge.collapsible {
+    display: inline-flex;
+    position: absolute;
+    top: 3px; right: 3px;
+    min-width: 16px; height: 16px;
+    padding: 0 4px;
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+    background: var(--lav-tint);
+    color: var(--lav-ink);
+    border: 1px solid var(--surface);
+  }
+  .sidebar .nav-item .nav-badge.collapsible[data-zero='true'] { display: none; }
+  .sidebar .nav-item[data-active='true'] .nav-badge.collapsible {
+    background: var(--lav-deep); color: #fff;
+  }
+}
+
+/* At 320px the content box is ~284px, but `.grid-cards` asks for a 300px track
+   and `.grid-halves` for 330px — so every topic card had its right edge silently
+   clipped by `.main`'s `overflow-x: clip`. `minmax(0, 1fr)` lets the track
+   shrink to the space that actually exists. Rare width, cheap fix, and it is the
+   difference between a trimmed card and a card that fits. */
+@media (max-width: 380px) {
+  .grid-cards, .grid-halves { grid-template-columns: minmax(0, 1fr); }
+  .grid-stats { grid-template-columns: minmax(0, 1fr); }
+  .dialog-actions { flex-wrap: wrap; }
 }
