@@ -1,5 +1,10 @@
 /** Shapes the dashboard reads. Mirrors the Supabase tables `run.py` writes. */
 
+// The autonomy switches are defined next to the code that resolves them, so the
+// precedence rules and the type cannot drift apart.
+import type { AutonomySettings } from './settings'
+export type { AutonomySettings } from './settings'
+
 export interface Topic {
   id: string
   slug: string
@@ -38,11 +43,26 @@ export interface BlogPost {
 }
 
 export interface AutopilotState {
+  /** Resolved `autopilot_enabled` — the kill switch, not the review switch. */
   enabled: boolean
+  /** Resolved `publish_gap_hours` — cadence, independent of who is reviewing. */
   gapHours: number
   scheduled: { slug: string; title: string; scheduled_for: string }[]
   nextPublishAt?: string | null
   error?: string
+  /**
+   * The last background job the cron actually ran — the engine's real heartbeat,
+   * as opposed to "is a topic in progress right now", which is false most of the
+   * day even on a perfectly healthy engine. Null when nothing has ever run.
+   */
+  lastRun?: { job: string; at: string; ok: boolean } | null
+  /**
+   * The full autonomy state, including which authority set each value. Optional
+   * because a cached response from before this shipped will not carry it, and a
+   * strip that crashed on the first poll after a deploy would be worse than one
+   * that renders the older fields.
+   */
+  settings?: AutonomySettings
 }
 
 export interface AgentRun {

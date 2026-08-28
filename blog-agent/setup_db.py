@@ -385,6 +385,47 @@ STATEMENTS = [
     """,
     "CREATE INDEX IF NOT EXISTS job_runs_job_at_idx ON job_runs (job, finished_at DESC)",
     "ALTER TABLE job_runs ENABLE ROW LEVEL SECURITY",
+
+    # -- Runtime autonomy settings --------------------------------------------
+    # The switches that used to be environment variables only. `AUTOPILOT_ENABLED`
+    # is read from os.environ when the Python worker starts, and the worker is a
+    # brand-new process on every tick -- so the variable was perfectly readable and
+    # completely unswitchable from the dashboard, which runs in a different
+    # process entirely. A Pause button wired to it would not have paused anything.
+    # One row both processes can read is the smallest thing that fixes that.
+    #
+    # Single row with typed columns, not a key/value bag: the settings are a
+    # fixed, known set with different types, and typed columns keep the range
+    # checks in the database instead of in every reader. Adding a switch later is
+    # the same ALTER TABLE ADD COLUMN pattern used everywhere else in this file.
+    #
+    # `publish_gap_hours` and `veto_window_hours` are two settings because they
+    # were always two ideas wearing one name. The gap is cadence -- how far apart
+    # posts land, which is an SEO decision and must survive the human being
+    # switched off. The veto window is the human's reprieve before a finished
+    # post ships. Collapsing them meant "turn the human off" also read as "dump
+    # the whole buffer today".
+    """
+    CREATE TABLE IF NOT EXISTS autopilot_settings (
+        id                 int PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+        autopilot_enabled  boolean NOT NULL DEFAULT true,
+        -- Seeded false because that is what the engine already does: autopilot has
+        -- auto-advanced both gates since it was written. Seeding true would make
+        -- running this migration silently halt a working pipeline. The *read*
+        -- fallback in swarm/settings.py is the opposite (true), because an
+        -- unreadable setting means we do not know the operator's intent, and the
+        -- safe answer to "don't know" is to stop at the gate.
+        human_in_the_loop  boolean NOT NULL DEFAULT false,
+        publish_gap_hours  int NOT NULL DEFAULT 24 CHECK (publish_gap_hours BETWEEN 1 AND 720),
+        veto_window_hours  int NOT NULL DEFAULT 24 CHECK (veto_window_hours BETWEEN 0 AND 720),
+        updated_at         timestamptz NOT NULL DEFAULT now(),
+        updated_by         text
+    )
+    """,
+    # The readers expect exactly one row and never create it, so that a failed
+    # read is never mistaken for "the operator turned everything off".
+    "INSERT INTO autopilot_settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING",
+    "ALTER TABLE autopilot_settings ENABLE ROW LEVEL SECURITY",
 ]
 
 

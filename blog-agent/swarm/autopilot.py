@@ -12,9 +12,17 @@ Cadence is enforced by per-post `scheduled_for` timestamps, so the tick can fire
 coarse schedule (hourly is plenty). Designed to be triggered by GitHub Actions hitting
 the dashboard's secret-protected /api/autopilot/tick, which spawns `run.py --autopilot`.
 
-Env knobs (all optional, with sane defaults):
+The two autonomy switches — does the engine run, and does it stop for a human — are
+read from the database at tick time by `swarm.settings`, not from the environment at
+import time. See that module for why: this process is respawned on every tick, so an
+env-only switch could be read but never thrown from the dashboard.
+
+Env knobs (all optional; the first four are break-glass overrides of the stored settings):
   AUTOPILOT_ENABLED              "true" | "false"  (kill switch)         default true
+  HUMAN_IN_THE_LOOP              "true" | "false"  (stop at both gates)  default false
   PUBLISH_GAP_HOURS              hours between published posts            default 24
+  VETO_WINDOW_HOURS              hours a finished post waits before it may publish
+                                 (only applies while the human is in the loop) default 24
   AUTOPILOT_BUFFER              finished posts to keep scheduled ahead    default 1
   AUTOPILOT_IDEATE_BATCH        topics to generate when the queue empties default 8
   AUTOPILOT_MAX_PRODUCE_PER_TICK cap on research+write work per tick      default 1
@@ -27,6 +35,7 @@ import os
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from swarm.settings import Settings, load_settings
 from swarm.slugs import slugify
 from swarm.telemetry import SpendCeilingExceeded
 
@@ -35,6 +44,23 @@ ACTIVE_STATES = ("researching", "writing", "publishing")
 # How recently an active row must have been touched to count as "a live tick".
 # Older than this = a previous run almost certainly crashed; don't deadlock on it.
 BUSY_FRESH_MINUTES = 20
+
+# The two states that mean "a person has to look at this".
+HUMAN_GATES = ("verifying_research", "verifying_draft")
+
+# With the human in the loop, every tick parks one more topic at a gate and never
+# schedules anything, so an unattended weekend would turn a review queue into a
+# landfill and spend the LLM budget filling it. Three is about a sitting's worth of
+# reading; past that the engine stops producing until someone clears the backlog.
+MAX_AWAITING_REVIEW = 3
+
+# What one production attempt did. This used to be a bool, which could not tell
+# "waiting for a person" apart from "this topic failed" — and the caller has to,
+# because one of those is a reason to retry with the next topic and the other is
+# a reason to stop producing for this tick.
+OUTCOME_SCHEDULED = "scheduled"   # reached 'scheduled'; it will publish itself
+OUTCOME_PARKED = "parked"         # deliberately left at a human gate
+OUTCOME_FAILED = "failed"         # did not complete; move on to another topic
 
 
 # ── time helpers ──────────────────────────────────────────────────────────────
@@ -89,10 +115,29 @@ def _future_scheduled_count(db: Any, now_iso: str) -> int:
     return len(rows)
 
 
-def _next_slot(db: Any, gap: timedelta, now: datetime) -> datetime:
-    """The next free publish slot: one gap after the latest anchor (the furthest
-    future scheduled post, or the most recent publish), never in the past.
-    First post ever (no anchor) → schedule for now, so it goes out on the next tick.
+def _awaiting_review_count(db: Any) -> int:
+    """Topics sitting at a human gate right now."""
+    rows = (db.table("topics").select("id")
+            .in_("status", list(HUMAN_GATES)).execute().data or [])
+    return len(rows)
+
+
+def _next_slot(db: Any, gap: timedelta, now: datetime, veto: timedelta) -> datetime:
+    """The next free publish slot.
+
+    Two independent floors, because two independent things are being protected:
+
+      cadence  — one gap after the latest anchor (the furthest future scheduled
+                 post, or the most recent publish). This is the SEO decision; it
+                 applies whether or not a human is watching, and it is what stops
+                 an unattended engine dumping a backlog in a single afternoon.
+      veto     — `now + veto`, the human's reprieve. Zero when the human is out of
+                 the loop, because the window exists to give a person time to
+                 object and nobody is listening.
+
+    Before these were separated, the first post ever (no anchor) was scheduled for
+    `now` and published on the very next tick — with no veto window at all, despite
+    the product promising one. The veto floor is what actually delivers it.
     """
     anchor: datetime | None = None
 
@@ -110,9 +155,10 @@ def _next_slot(db: Any, gap: timedelta, now: datetime) -> datetime:
         if pub_dt and (anchor is None or pub_dt > anchor):
             anchor = pub_dt
 
+    floor = now + veto
     if anchor is None:
-        return now
-    return max(anchor + gap, now)
+        return floor
+    return max(anchor + gap, floor)
 
 
 def _pick_next_queued(db: Any) -> dict | None:
@@ -193,10 +239,13 @@ def _publish_due(db: Any, orch: Any, gap: timedelta, log: list[str]) -> int:
     return published
 
 
-def _produce_one(db: Any, orch: Any, topic: dict, slot: datetime, log: list[str]) -> bool:
-    """Research → write the topic (auto-advancing both gates), then schedule it.
-    Returns True only if it reached 'scheduled'. Any stage failure leaves the topic
-    in 'failed' (the orchestrator handles that) and returns False so the caller moves on.
+def _produce_one(db: Any, orch: Any, topic: dict, slot: datetime, log: list[str],
+                 hitl: bool) -> str:
+    """Research → write the topic, then schedule it. Returns one of the OUTCOME_* values.
+
+    `hitl` is the human-in-the-loop switch. With it on, this stops at the audit gate
+    and hands the topic to a person; with it off, both gates auto-advance and the
+    topic goes straight to 'scheduled', where the clock publishes it.
 
     Each topic is its own recorded run. That matters for more than tidy telemetry:
     MAX_RUN_COST_USD is a *per-run* ceiling, so a single recorder spanning a whole
@@ -210,22 +259,46 @@ def _produce_one(db: Any, orch: Any, topic: dict, slot: datetime, log: list[str]
     log.append(f"produce: {slug}")
 
     with recorded_run(slug, tid, trigger="autopilot"):
-        return _produce_one_inner(db, orch, topic, slot, log)
+        return _produce_one_inner(db, orch, topic, slot, log, hitl)
 
 
-def _produce_one_inner(db: Any, orch: Any, topic: dict, slot: datetime, log: list[str]) -> bool:
+def _fail_topic(db: Any, tid: str, slug: str, reason: str, log: list[str]) -> None:
+    """Move a topic to 'failed' with a reason the dashboard can show.
+
+    'failed' rather than a new status on purpose: it already means "in the lane
+    that needs a person" everywhere in the UI, and inventing a status the
+    dashboard has never heard of would render it as "Unknown" in the queued lane —
+    which is precisely the silent stall this is meant to prevent.
+    """
+    now = _iso(_now())
+    try:
+        db.table("topics").update({"status": "failed", "updated_at": now}).eq("id", tid).execute()
+        db.table("blog_posts").update({"last_error": reason[:2000]}).eq("topic_id", tid).execute()
+    except Exception as exc:  # the log line below is then the only record; keep it
+        log.append(f"  could not mark {slug} failed: {exc}")
+
+
+def _produce_one_inner(db: Any, orch: Any, topic: dict, slot: datetime, log: list[str],
+                       hitl: bool) -> str:
     tid, slug, title = topic["id"], topic["slug"], topic["title"]
     tags = topic.get("tags") or []
 
     orch.run_research(tid, slug, title, tags)
     if _status(db, slug) != "verifying_research":
         log.append(f"  research did not complete; leaving {slug}")
-        return False
+        return OUTCOME_FAILED
 
     # ── Audit gate ──────────────────────────────────────────────────────────
+    # With the human in the loop this is where autopilot's job ends: it produced
+    # the research, and a person decides. Approving in the dashboard runs the
+    # writer, which stops again at the draft gate — so both gates are honoured by
+    # stopping once here, rather than by checking the switch twice.
+    if hitl:
+        log.append(f"  human in the loop — {slug} is waiting at the audit gate")
+        return OUTCOME_PARKED
+
     # run_research already ran + stored the audit verdict. On a hard 'reject',
-    # re-research once, then re-audit. A topic that fails audit twice is left at
-    # verifying_research (a human review item) and NOT auto-written/published.
+    # re-research once, then re-audit.
     verdict = _read_audit(db, tid)
     rec = (verdict.get("recommendation") or "proceed").lower()
     if rec == "reject":
@@ -233,25 +306,34 @@ def _produce_one_inner(db: Any, orch: Any, topic: dict, slot: datetime, log: lis
         orch.run_research(tid, slug, title, tags)
         if _status(db, slug) != "verifying_research":
             log.append(f"  re-research did not complete; leaving {slug}")
-            return False
+            return OUTCOME_FAILED
         verdict = _read_audit(db, tid)
         if (verdict.get("recommendation") or "proceed").lower() == "reject":
-            log.append(f"  audit rejected {slug} again — holding for human review, skipping")
-            return False
+            # Twice-rejected, and nobody is coming. Leaving it at verifying_research
+            # (what we do when a human *is* in the loop) would park it in a queue
+            # no one reads — a stall that looks exactly like a pending review. It is
+            # not published either: the auditor exists precisely to stop this draft.
+            # So it fails loudly, with the auditor's own words attached, and lands
+            # in the lane the dashboard already labels "needs your attention".
+            reason = (f"Audit rejected twice (score={verdict.get('score')}): "
+                      f"{verdict.get('summary') or 'no summary given'}").strip()
+            _fail_topic(db, tid, slug, reason, log)
+            log.append(f"  audit rejected {slug} twice — marked failed: {reason}")
+            return OUTCOME_FAILED
     log.append(f"  audit {verdict.get('recommendation', 'proceed')} "
                f"(score={verdict.get('score')}) for {slug}")
 
     orch.run_writing(tid, slug, title)
     if _status(db, slug) != "verifying_draft":
         log.append(f"  writing did not complete; leaving {slug}")
-        return False
+        return OUTCOME_FAILED
 
     db.table("topics").update({
         "status": "scheduled", "scheduled_for": _iso(slot), "updated_at": _iso(_now()),
     }).eq("id", tid).execute()
     db.table("blog_posts").update({"last_error": None}).eq("topic_id", tid).execute()
     log.append(f"  -> scheduled {slug} for {_iso(slot)}")
-    return True
+    return OUTCOME_SCHEDULED
 
 
 def _refill(db: Any, orch: Any, batch: int, log: list[str]) -> int:
@@ -309,11 +391,21 @@ def _refill(db: Any, orch: Any, batch: int, log: list[str]) -> int:
     return inserted
 
 
-def _maintain_buffer(db: Any, orch: Any, gap: timedelta, buffer: int,
-                     ideate_batch: int, max_produce: int, log: list[str]) -> int:
+def _maintain_buffer(db: Any, orch: Any, gap: timedelta, veto: timedelta, buffer: int,
+                     ideate_batch: int, max_produce: int, hitl: bool, log: list[str]) -> int:
     """Keep `buffer` finished posts scheduled ahead, producing at most `max_produce`
     per tick so a single tick stays bounded in runtime.
     """
+    # With the human in the loop nothing this function does ever reaches
+    # 'scheduled', so the review queue is the only thing that grows. Check its
+    # depth before spending a single research call on making it deeper.
+    if hitl:
+        waiting = _awaiting_review_count(db)
+        if waiting >= MAX_AWAITING_REVIEW:
+            log.append(f"{waiting} topics already waiting for review "
+                       f"(cap {MAX_AWAITING_REVIEW}) — not producing more this tick")
+            return 0
+
     produced = 0
     attempts = 0
     max_attempts = max_produce + 3  # tolerate a couple of bad topics without stalling
@@ -336,11 +428,25 @@ def _maintain_buffer(db: Any, orch: Any, gap: timedelta, buffer: int,
         # seeded backlog gets written out steadily instead of stalling at the buffer.
         # Publishing stays on cadence because each post is scheduled a gap apart.
 
-        slot = _next_slot(db, gap, now)
+        slot = _next_slot(db, gap, now, veto)
         attempts += 1
         try:
-            if _produce_one(db, orch, topic, slot, log):
+            outcome = _produce_one(db, orch, topic, slot, log, hitl)
+            if outcome == OUTCOME_SCHEDULED:
                 produced += 1
+            elif outcome == OUTCOME_PARKED:
+                # Handing a topic to a person is a finished piece of work, not a
+                # failure to retry. Without this the loop would spend its remaining
+                # attempts parking three more topics at the same unattended gate.
+                break
+        except SpendCeilingExceeded as exc:
+            # Covers ProviderBlocked (swarm/failures.py), which subclasses it: the
+            # provider is refusing on a condition — no credit, a bad key — that is
+            # identically true for the next topic. On 2026-08-27 marching on cost
+            # eight topics and the last of a balance. max_attempts is max_produce+3,
+            # so without this one tick burns four of them.
+            log.append(f"  STOPPING the tick at {topic.get('slug')}: {exc}")
+            break
         except Exception as exc:  # orchestrator marked it failed; try the next topic
             log.append(f"  produce crashed for {topic.get('slug')}: {exc}")
     return produced
@@ -351,24 +457,39 @@ def run_tick(orch: Any, db: Any) -> list[str]:
     """Run one autopilot tick. Returns a human-readable log (also printed by run.py)."""
     log: list[str] = [f"[autopilot] tick @ {_iso(_now())}"]
 
-    if os.environ.get("AUTOPILOT_ENABLED", "true").strip().lower() == "false":
-        log.append("AUTOPILOT_ENABLED=false — standing down (no-op)")
+    # Read at tick time, not at import time. The worker is respawned on every tick,
+    # so a value frozen at process start is exactly the bug the settings table
+    # exists to remove.
+    settings: Settings = load_settings(db)
+    log.append(settings.describe())
+
+    if not settings.autopilot_enabled:
+        log.append(f"autopilot disabled ({settings.sources.get('autopilot_enabled')}) "
+                   "— standing down (no-op)")
         return log
 
-    gap = timedelta(hours=max(1, _env_int("PUBLISH_GAP_HOURS", 24)))
+    gap = timedelta(hours=settings.publish_gap_hours)
+    veto = timedelta(hours=settings.effective_veto_hours)
+    hitl = settings.human_in_the_loop
     buffer = max(1, _env_int("AUTOPILOT_BUFFER", 1))
     ideate_batch = max(1, _env_int("AUTOPILOT_IDEATE_BATCH", 8))
     max_produce = max(1, _env_int("AUTOPILOT_MAX_PRODUCE_PER_TICK", 1))
-    log.append(f"config: gap={gap}, buffer={buffer}, ideate_batch={ideate_batch}, "
-               f"max_produce={max_produce}")
+    log.append(f"config: gap={gap}, veto={veto}, human_in_the_loop={hitl}, buffer={buffer}, "
+               f"ideate_batch={ideate_batch}, max_produce={max_produce}")
 
     busy = _is_busy(db)
     if busy:
         log.append(f"another tick is mid-flight (active: {busy}) — standing down")
         return log
 
+    # Publishing due posts is unconditional. The human-in-the-loop switch governs
+    # whether a post reaches 'scheduled' at all; once it is there, `scheduled_for`
+    # is the operator's own decision and switching the human back on must not
+    # silently strand work they already approved. To stop a scheduled post, veto
+    # it or turn autopilot off.
     published = _publish_due(db, orch, gap, log)
-    produced = _maintain_buffer(db, orch, gap, buffer, ideate_batch, max_produce, log)
+    produced = _maintain_buffer(db, orch, gap, veto, buffer, ideate_batch,
+                                max_produce, hitl, log)
     log.append(f"[autopilot] done: published={published} produced={produced}")
     return log
 
@@ -383,21 +504,34 @@ def produce_all_queued(orch: Any, db: Any) -> list[str]:
     verifying_research if it fails audit twice), so the loop always terminates.
     """
     log: list[str] = [f"[produce-all] start @ {_iso(_now())}"]
-    if os.environ.get("AUTOPILOT_ENABLED", "true").strip().lower() == "false":
-        log.append("AUTOPILOT_ENABLED=false — standing down (no-op)")
+
+    settings: Settings = load_settings(db)
+    log.append(settings.describe())
+    if not settings.autopilot_enabled:
+        log.append(f"autopilot disabled ({settings.sources.get('autopilot_enabled')}) "
+                   "— standing down (no-op)")
         return log
 
-    gap = timedelta(hours=max(1, _env_int("PUBLISH_GAP_HOURS", 24)))
+    gap = timedelta(hours=settings.publish_gap_hours)
+    veto = timedelta(hours=settings.effective_veto_hours)
+    hitl = settings.human_in_the_loop
     max_topics = max(1, _env_int("PRODUCE_ALL_MAX", 200))
     scheduled = 0
     for _ in range(max_topics):
+        # The cap matters more here than in a tick: "catch up queue" against 200
+        # topics with the human in the loop would research all 200 and stack them
+        # at a gate, which is neither a catch-up nor a review queue.
+        if hitl and _awaiting_review_count(db) >= MAX_AWAITING_REVIEW:
+            log.append(f"review queue is full (cap {MAX_AWAITING_REVIEW}) — stopping; "
+                       "clear it or switch the human out of the loop")
+            break
         topic = _pick_next_queued(db)
         if topic is None:
             log.append("no more queued topics")
             break
-        slot = _next_slot(db, gap, _now())
+        slot = _next_slot(db, gap, _now(), veto)
         try:
-            if _produce_one(db, orch, topic, slot, log):
+            if _produce_one(db, orch, topic, slot, log, hitl) == OUTCOME_SCHEDULED:
                 scheduled += 1
         except SpendCeilingExceeded as exc:
             # A ceiling is a stop, not a per-topic failure. Swallowing it here
