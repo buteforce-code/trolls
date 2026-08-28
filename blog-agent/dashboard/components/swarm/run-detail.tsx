@@ -35,6 +35,10 @@ const KIND_TONE: Record<string, string> = {
   agent_started: 'chip--lav',
   agent_finished: 'chip--grey',
   agent_failed: 'chip--rose',
+  // A retry is not a failure and not a success — it is the pipeline absorbing a
+  // transient provider fault. Worth seeing (three of them in a row is a story),
+  // not worth the alarm colour.
+  agent_retry: 'chip--amber',
   agent_skipped: 'chip--grey',
   tool_call: 'chip--grey',
   gate_passed: 'chip--teal',

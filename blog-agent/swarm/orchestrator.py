@@ -43,6 +43,7 @@ from swarm.agents.linker import run_linking
 from swarm.agents.schema_ld import run_schema_ld
 from swarm.agents.social import run_social
 from swarm import brand
+from swarm import failures
 from swarm import geo
 from swarm import guards
 from swarm import telemetry as tm
@@ -116,8 +117,20 @@ def _record_step_failure(topic_id: str, step: str, err: Exception | str) -> None
     structured data. Persisting to `last_error` makes it visible at the review
     gate while still letting the draft through.
     """
+    verdict = failures.classify(err)
     detail = f"[{step}] {err}"[:4000]
     print(f"[writer] {step} FAILED (non-blocking, review before publish): {err}", flush=True)
+    if verdict.batch_fatal:
+        # The enrichment steps stay best-effort even here: the draft above them is
+        # written, gated and expensive, and throwing it away to stop the batch one
+        # topic earlier is a bad trade. But say plainly what happened, because the
+        # *next* topic's writer is about to hit the same wall and stop everything —
+        # and without this line that stop looks like it came out of nowhere.
+        print(
+            f"[writer] ⚠ {step}'s failure is not transient ({verdict.kind}). {verdict.remedy} "
+            f"This draft is kept, but the next topic will not get one.",
+            flush=True,
+        )
     try:
         _upsert_post(topic_id, {"last_error": detail})
     except Exception as inner:
@@ -163,6 +176,14 @@ def recorded_run(topic_slug: str, topic_id: str | None = None, trigger: str = "m
     recorder = start_run(topic_slug, topic_id, trigger)
     try:
         yield recorder
+    except failures.ProviderBlocked as exc:
+        # A ProviderBlocked *is* a SpendCeilingExceeded (so every batch loop that
+        # already stops on a ceiling stops on this too), but it is not our ceiling
+        # that fired — it is the provider refusing. Logging it as "SPEND CEILING"
+        # would send the operator to MAX_RUN_COST_USD, which is not the problem.
+        print(f"[swarm] PROVIDER BLOCKED ({exc.kind}): {exc}", flush=True)
+        recorder.finish(tm.RUN_STATUS_FAILED, error=str(exc))
+        raise
     except tm.SpendCeilingExceeded as exc:
         print(f"[swarm] SPEND CEILING: {exc}", flush=True)
         recorder.finish(tm.RUN_STATUS_FAILED, error=str(exc))
@@ -207,10 +228,15 @@ async def _run_agent(
     Tokens accumulate across retries, not just the successful attempt — a call
     that streamed halfway and then hit a 503 still cost money, and the spend
     ceiling is only honest if it counts that.
+
+    Retries are for transient faults only. Anything `swarm.failures` classifies as
+    batch-fatal (no credit, bad key, malformed request) raises `ProviderBlocked`
+    immediately — see the comment in the except block.
     """
     last_err: Exception | None = None
     in_tokens = 0
     out_tokens = 0
+    attempts_made = 0
     for attempt in range(retries):
         try:
             async def _attempt() -> str:
@@ -238,31 +264,35 @@ async def _run_agent(
             return text, in_tokens, out_tokens
         except Exception as exc:
             last_err = exc
-            msg = str(exc).lower()
-            is_timeout = isinstance(exc, asyncio.TimeoutError)
-            # Rate-limit / quota — OpenAI (429, "rate limit", "insufficient_quota")
-            # and Gemini ("resource exhausted", "quota").
-            is_quota = (
-                "resource exhausted" in msg
-                or "429" in msg
-                or "quota" in msg
-                or "rate limit" in msg
-                or "ratelimit" in msg
-            )
-            # Transient capacity / server errors worth retrying — OpenAI (500/502/503,
-            # "overloaded", "service unavailable"), Gemini (503/UNAVAILABLE), and a
-            # connection that never returned within _AGENT_CALL_TIMEOUT_S.
-            is_unavailable = (
-                is_timeout
-                or "503" in msg or "502" in msg or "500" in msg
-                or "unavailable" in msg or "overloaded" in msg
-                or "high demand" in msg or "timeout" in msg
-                or "timed out" in msg or "apiconnection" in msg
-            )
-            if (is_quota or is_unavailable) and attempt < retries - 1:
+            attempts_made = attempt + 1
+            verdict = failures.classify(exc)
+
+            # Fail fast on anything the next call would hit identically. The 402
+            # that killed eight topics on 2026-08-27 was retried by OpenRouter's
+            # own router (its `previous_errors` array shows three 402s per call)
+            # and would have been retried here too the moment its text happened to
+            # contain a 5xx-looking number. A payment, auth or bad-request failure
+            # does not become true again because we waited 20 seconds — it burns
+            # the remainder of a balance that is already gone.
+            if verdict.batch_fatal:
+                print(
+                    f"  [STOP] {agent.name}: {verdict.kind} — not retryable. {verdict.remedy}",
+                    flush=True,
+                )
+                raise failures.blocked(agent.name, exc, verdict) from exc
+
+            if verdict.retryable and attempt < retries - 1:
                 wait = 20 * (attempt + 1)
-                reason = "Quota" if is_quota else ("Call timed out" if is_timeout else "Model unavailable (503)")
-                print(f"  [WAIT] {reason}, retrying in {wait}s...", flush=True)
+                print(
+                    f"  [WAIT] {verdict.reason}, retrying in {wait}s "
+                    f"(attempt {attempts_made}/{retries})...",
+                    flush=True,
+                )
+                get_recorder().emit(
+                    agent.name, tm.KIND_AGENT_RETRY,
+                    detail={"attempt": attempts_made, "kind": verdict.kind,
+                            "reason": verdict.reason, "error": str(exc)[:500]},
+                )
                 await asyncio.sleep(wait)
             else:
                 break
@@ -273,7 +303,13 @@ async def _run_agent(
         if isinstance(last_err, asyncio.TimeoutError)
         else str(last_err)
     )
-    raise RuntimeError(f"Agent '{agent.name}' failed after {retries} attempts: {err_desc}")
+    # `attempts_made`, not `retries`. The stored errors from 2026-08-27 all read
+    # "failed after 3 attempts" when the loop had broken out after one — the first
+    # line an operator reads was describing a retry storm that never happened.
+    plural = "" if attempts_made == 1 else "s"
+    raise RuntimeError(
+        f"Agent '{agent.name}' failed after {attempts_made} attempt{plural}: {err_desc}"
+    )
 
 
 def _run(agent: LlmAgent, prompt: str, session_id: str) -> str:

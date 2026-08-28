@@ -114,7 +114,12 @@ export function stageStates(status: string, failedAt: number | null = null): Sta
 }
 
 /** One-line answer to "what is happening to this topic right now?" */
-export function substatus(status: string, scheduledFor?: string | null, heldCount?: number | null): string {
+export function substatus(
+  status: string,
+  scheduledFor?: string | null,
+  heldCount?: number | null,
+  lastError?: string | null,
+): string {
   switch (status) {
     case 'queued':             return 'Waiting its turn'
     case 'researching':        return 'The research agent is gathering sources'
@@ -125,7 +130,132 @@ export function substatus(status: string, scheduledFor?: string | null, heldCoun
     case 'publishing':         return 'Posting to the site API'
     case 'published':          return 'Live on the blog'
     case 'cancelled':          return 'Cancelled'
-    case 'failed':             return 'A stage crashed'
+    case 'failed':             return classifyFailure(lastError).substatus
     default:                   return ''
+  }
+}
+
+/* ── Why a run failed ────────────────────────────────────────────────────────
+ *
+ * `failed` used to render as "Needs a fix · A stage crashed" whatever had
+ * happened. On 2026-08-27 eight topics failed together on a single OpenRouter
+ * 402 — the account was out of credit — and the dashboard told the operator
+ * eight times that a stage had crashed. Nothing had crashed. The only action
+ * that would help was topping up an account, and the only way to learn that was
+ * to open a SQL console and read `blog_posts.last_error` by hand.
+ *
+ * So the failure text is classified here, and the UI says which of two very
+ * different things happened:
+ *
+ *   blocked — an external account condition. Retrying is futile until a human
+ *             fixes something outside this system. The banner names it and
+ *             links to the fix.
+ *   crash   — the pipeline itself broke on this topic. Retry may well work.
+ *
+ * This mirrors `swarm/failures.py` on the Python side, which classifies the same
+ * strings to decide whether to retry. Two implementations of one rule is a real
+ * cost; the alternative was shipping the classification through the API as a new
+ * column, which is a schema change for something the raw text already carries.
+ * If the phrase tables drift apart, the Python one is the source of truth — it
+ * is the one with tests written against the real stored errors.
+ */
+export type FailureKind = 'blocked' | 'crash'
+
+export interface FailureMeta {
+  kind: FailureKind
+  /** The one-line substatus, e.g. under the title. */
+  substatus: string
+  /** The banner headline — what actually happened, in plain words. */
+  headline: string
+  /** What the operator should do next. Empty when we genuinely don't know. */
+  action: string
+  /** Where the fix lives, when it is somewhere outside this dashboard. */
+  href: string | null
+  /** The provider's own words, for the operator who wants them. */
+  raw: string
+}
+
+const OPENROUTER_CREDITS_URL = 'https://openrouter.ai/settings/credits'
+
+/**
+ * Phrases that mean "an external account is blocking this", with the message and
+ * the fix for each. Order matters: the first match wins, so the specific billing
+ * phrases sit ahead of the looser auth ones.
+ *
+ * Kept narrow on purpose. A phrase that also appears in a transient error would
+ * tell the operator to go fix their billing when the pipeline just needs a retry,
+ * which is a worse lie than the one this replaces.
+ */
+interface Blocker {
+  /** The `[kind]` tag swarm/failures.py stamps on the front of a blocked error. */
+  tag: string
+  /** Provider wording, for the errors stored before that tag existed. */
+  match: readonly string[]
+  headline: string
+  action: string
+  href: string | null
+}
+
+const BLOCKERS: readonly Blocker[] = [
+  {
+    tag: '[credits]',
+    match: [
+      'requires more credits', 'add more credits', 'openrouter_credits',
+      'insufficient credits', 'insufficient_quota', 'exceeded your current quota',
+      'credit balance is too low', 'payment required',
+    ],
+    headline: 'The LLM account is out of credit — nothing is broken in the pipeline.',
+    action: 'Add credits to the provider account, then resume. Retrying before that fails identically.',
+    href: OPENROUTER_CREDITS_URL,
+  },
+  {
+    tag: '[auth]',
+    match: [
+      'invalid api key', 'incorrect api key', 'api key not valid',
+      'no auth credentials', 'unauthorized',
+    ],
+    headline: 'The LLM provider rejected the API key.',
+    action: 'Check the provider key in the environment — it may be missing, wrong, or revoked.',
+    href: null,
+  },
+  {
+    tag: '[invalid_request]',
+    match: ['is not a valid model', 'model_not_found', 'maximum context length'],
+    headline: 'The provider rejected the request itself.',
+    action: 'Usually an unknown model name in the LLM_MODEL_* routing, or a prompt over the context window.',
+    href: null,
+  },
+]
+
+/** Never throws, and treats a missing or unrecognised error as an ordinary crash. */
+export function classifyFailure(lastError?: string | null): FailureMeta {
+  const raw = (lastError ?? '').trim()
+  const haystack = raw.toLowerCase()
+
+  // The tag is checked first and on its own: an error that came through the new
+  // classifier already carries the verdict, so the UI does not have to re-derive
+  // it from provider wording that may change.
+  const blocker =
+    BLOCKERS.find(b => haystack.includes(b.tag)) ??
+    BLOCKERS.find(b => b.match.some(phrase => haystack.includes(phrase)))
+
+  if (blocker) {
+    return {
+      kind: 'blocked',
+      substatus: 'Blocked on the LLM account — not a code failure',
+      headline: blocker.headline,
+      action: blocker.action,
+      href: blocker.href,
+      raw,
+    }
+  }
+
+  return {
+    kind: 'crash',
+    substatus: 'A stage crashed',
+    headline: raw || 'A stage crashed and needs your action.',
+    action: raw ? '' : 'Open the run to see which agent failed.',
+    href: null,
+    raw,
   }
 }

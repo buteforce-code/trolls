@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import type { BlogPost, Topic } from '../../lib/types'
 import { countdown } from '../../lib/format'
-import { STAGES, stageStates, statusMeta, substatus } from '../../lib/status'
+import { STAGES, classifyFailure, stageStates, statusMeta, substatus } from '../../lib/status'
 import { StatusChip, Tag } from '../ui/chip'
 
 /**
@@ -43,8 +43,13 @@ export function TopicHero({ topic, post }: { topic: Topic; post: BlogPost | null
         {topic.title}
       </h1>
 
-      <p className="t-base" style={{ color: 'var(--ink-mute)', marginBottom: 18 }}>
-        /{topic.slug} · {substatus(topic.status, topic.scheduled_for, null)}
+      {/* Polite, because this line is where a run's progress actually shows up.
+          The page re-polls every 4s and the status changes under the reader; a
+          screen-reader operator watching a topic was previously never told the
+          run had failed, or scheduled, or finished. It is a short single line,
+          so announcing it in full costs nothing. */}
+      <p className="t-base" style={{ color: 'var(--ink-mute)', marginBottom: 18 }} aria-live="polite">
+        /{topic.slug} · {substatus(topic.status, topic.scheduled_for, null, post?.last_error)}
       </p>
 
       {(topic.tags?.length ?? 0) > 0 && (
@@ -103,13 +108,7 @@ function StatusBanner({ topic, post, live }: { topic: Topic; post: BlogPost | nu
   }
 
   if (topic.status === 'failed') {
-    return (
-      <div className="notice notice--rose">
-        <span style={{ flex: 1, minWidth: 200 }}>
-          {post?.last_error || 'A stage crashed and needs your action.'}
-        </span>
-      </div>
-    )
+    return <FailureBanner lastError={post?.last_error} />
   }
 
   if (topic.status === 'verifying_research' || topic.status === 'verifying_draft') {
@@ -144,6 +143,69 @@ function StatusBanner({ topic, post, live }: { topic: Topic; post: BlogPost | nu
   return (
     <div className="notice notice--grey">
       <span style={{ flex: 1, minWidth: 200 }}>Queued and waiting its turn. Nothing to do.</span>
+    </div>
+  )
+}
+
+/**
+ * What a failed run tells the operator.
+ *
+ * Two failures look identical in the database and are nothing alike in what they
+ * ask of a person. A crashed stage is worth retrying. A provider refusing on a
+ * spent balance is not — on 2026-08-27 that refusal killed eight topics in a row,
+ * and the banner said "A stage crashed" all eight times while the only useful
+ * action was topping up an account. So the blocked case gets its own colour, its
+ * own next step, and a link straight to the fix; and either way the provider's
+ * own words stay one click away, because "open a SQL console to find out it was a
+ * 402" is not an acceptable answer to "why did this stop".
+ */
+function FailureBanner({ lastError }: { lastError?: string | null }) {
+  const failure = classifyFailure(lastError)
+  const blocked = failure.kind === 'blocked'
+
+  return (
+    <div className={blocked ? 'notice notice--amber' : 'notice notice--rose'} style={{ alignItems: 'flex-start' }}>
+      <div style={{ flex: 1, minWidth: 200, display: 'grid', gap: 8 }}>
+        <span style={{ fontWeight: 600 }}>{failure.headline}</span>
+
+        {failure.action && (
+          <span className="t-sm">
+            {failure.action}
+            {failure.href && (
+              <>
+                {' '}
+                <a href={failure.href} target="_blank" rel="noreferrer" style={{ fontWeight: 600 }}>
+                  Open the top-up page ↗
+                </a>
+              </>
+            )}
+          </span>
+        )}
+
+        {blocked && (
+          <span className="t-sm" style={{ opacity: 0.85 }}>
+            The research for this topic is already stored and paid for. Once the account is
+            funded, <code>python run.py --resume-failed</code> re-runs the writer from it
+            rather than researching again.
+          </span>
+        )}
+
+        {/* The raw provider text, collapsed. Nobody wants a wall of JSON in the
+            banner, and the one person debugging it needs every character of it. */}
+        {failure.raw && (blocked || failure.raw !== failure.headline) && (
+          <details className="t-sm">
+            <summary style={{ cursor: 'pointer' }}>Show the exact error</summary>
+            <pre
+              style={{
+                whiteSpace: 'pre-wrap', wordBreak: 'break-word', marginTop: 8,
+                maxHeight: 220, overflowY: 'auto', fontSize: 12, lineHeight: 1.5,
+              }}
+            >
+              {failure.raw}
+            </pre>
+          </details>
+        )}
+      </div>
     </div>
   )
 }

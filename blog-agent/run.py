@@ -5,6 +5,9 @@ Usage:
   python run.py --topic "..." --stage research   # run only research
   python run.py --approve <slug>                 # approve current stage
   python run.py --reject  <slug> --feedback "..." # reject and re-run
+  python run.py --list-failed                    # what is stranded, and why (free)
+  python run.py --resume-failed                  # re-run the writer on stranded
+                                                 # topics, reusing stored research
 """
 from __future__ import annotations
 
@@ -81,6 +84,11 @@ def main():
                    help="Score every published post, fit the bandit, and rank the queue")
     g.add_argument("--scout", action="store_true",
                    help="Sweep trend sources, gate them against the brand, and store scored signals")
+    g.add_argument("--list-failed", action="store_true", dest="list_failed",
+                   help="Show every failed topic and which stage it could resume at. Spends nothing")
+    g.add_argument("--resume-failed", action="store_true", dest="resume_failed",
+                   help="Re-run the writer for failed topics that already have research, "
+                        "reusing the stored digest instead of researching again")
 
     parser.add_argument("--tags",     default="", help="Comma-separated tags (used with --topic)")
     parser.add_argument("--feedback", default="", help="Rejection feedback (used with --reject)")
@@ -88,6 +96,10 @@ def main():
                         help="Force a specific stage to run (used with --topic on existing slug)")
     parser.add_argument("--days", type=int, default=None,
                         help="Trailing window for --ingest-analytics (default ANALYTICS_INGEST_DAYS, or 90 to backfill)")
+    parser.add_argument("--slugs", default="",
+                        help="Comma-separated slugs to limit --resume-failed to (default: all of them)")
+    parser.add_argument("--limit", type=int, default=100,
+                        help="Cap on topics touched by --list-failed / --resume-failed")
 
     args = parser.parse_args()
 
@@ -127,6 +139,16 @@ def main():
         run_and_record(db, "scout", lambda: run_scout(db))
         return
 
+    # Read-only inventory of what is stranded. Deliberately before the orchestrator
+    # is built: an operator asking "what is stuck and what will it cost me" should
+    # not have to satisfy every provider key check to get an answer.
+    if args.list_failed:
+        from swarm.recovery import describe
+
+        for line in describe(_db(), limit=args.limit):
+            print(line, flush=True)
+        return
+
     # Pure computation over already-stored metrics — no agents, no LLM calls.
     if args.learn:
         from swarm.jobs import run_and_record
@@ -154,6 +176,23 @@ def main():
     if args.autopilot:
         from swarm.autopilot import run_tick
         for line in run_tick(orch, db):
+            print(line, flush=True)
+        return
+
+    # ── Resume failed topics at the writer ────────────────────────────────────
+    # Autopilot never picks a `failed` topic back up (see swarm/recovery.py), so
+    # without this they stay stranded with their paid-for research intact. The
+    # batch stops on the first ProviderBlocked rather than marching the rest of
+    # the list into the same wall.
+    if args.resume_failed:
+        from swarm.recovery import resume
+
+        slugs = [s.strip() for s in args.slugs.split(",") if s.strip()]
+        for value in slugs:
+            if not guards.is_valid_slug(value):
+                print(f"Invalid slug: {value!r}")
+                sys.exit(2)
+        for line in resume(orch, db, slugs=slugs or None, limit=args.limit):
             print(line, flush=True)
         return
 
