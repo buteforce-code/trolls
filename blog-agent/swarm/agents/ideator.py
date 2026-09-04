@@ -67,11 +67,12 @@ You will ALSO be handed an EXISTING TITLES list in the user message. Treat both 
 4. tavily_search_linkedin(...) — what buyers and practitioners are debating; real buyer language.
 5. tavily_search_reddit(...)   — real pain points and questions from practitioners.
 6. youtube_search(...)         — which explainers get traction (search-intent signal).
-Search across ALL of Buteforce's capability areas, not just one: computer vision (QC,
-defect detection, retail/construction footfall and zone analytics), document AI/OCR, AI
-agents (lead qualification, inquiry handling, customer support), workflow automation, and
-AI-powered web applications. The Chennai/Tamil Nadu manufacturing corridor is one real,
-credible angle among these — not the default one.
+Search inside the mandated cluster only — manufacturing computer vision and quality
+control: automated visual inspection, defect and anomaly detection, line-side QC, vision
+system cost and ROI, vendor selection, build-vs-buy. The company sells four other things;
+the blog is not writing about them right now, and topics outside this cluster will be
+dropped. The Chennai/Tamil Nadu manufacturing corridor is credible context here, used
+where a post is genuinely about it.
 
 ━━━ STEP 3 — PROPOSE {batch} TOPICS ━━━
 Return ONLY a raw JSON array (no markdown fence, no commentary) of EXACTLY {batch} objects:
@@ -92,13 +93,25 @@ Return ONLY a raw JSON array (no markdown fence, no commentary) of EXACTLY {batc
 ]
 
 ━━━ RULES ━━━
-- SPREAD ACROSS VERTICALS. Do not let one cluster's head start crowd out the others — every
-  batch should include topics from more than one capability area. The GSC SIGNALS block above
-  (if present) shows what has ranked so far, but that reflects what has been published so far,
-  not the whole business — treat a page-2, high-impression opportunity there as one legitimate
-  target among several, not a mandate to spend the majority of every batch on it.
+- STAY IN THE MANDATED CLUSTER. The SEO STRATEGY block above names exactly one cluster the
+  blog is currently allowed to write. Every topic in this batch must belong to it. This
+  instruction reverses the previous one ("spread across verticals"), and the reversal is
+  measured, not stylistic: 38 posts spread over 8 clusters earned 1,899 impressions and 17
+  clicks, because no cluster ever reached the ~25-post depth at which one starts to rank.
+  Breadth is what failed. Depth is the experiment now running.
+- EVERY TOPIC MUST TARGET A KEYWORD PEOPLE ACTUALLY SEARCH. `target_keyword` is checked
+  against real search-volume data before the topic is queued, and a phrase with no demand is
+  rejected before anything is written. Do not invent keyword-shaped strings: "AI precision
+  agriculture India" read like a keyword, passed every other gate, ran to 2,517 words and
+  earned zero impressions. Prefer wording you have evidence for — a query from the SEARCH
+  SIGNALS block, or a phrase a buyer would plausibly type into Google.
+- MOSTLY BOTTOM-OF-FUNNEL. At least half of every batch must be buyer-stage: comparisons
+  ("X vs Y", vendor shortlists), cost, build-vs-buy, how to evaluate a vendor, case studies
+  with real numbers. Informational explainers trigger an AI Overview 36% of the time against
+  8% for commercial queries, and an AI Overview cuts organic click-through to roughly 0.6%.
+  At most one topic per batch is a pure explainer.
 - Match each topic's audience and geography to what the topic is actually about — do not force
-  every topic toward one region or one industry.
+  every topic toward one region.
 - ZERO duplicates: if a title overlaps an existing post or the EXISTING TITLES list, drop it and invent another.
 - Each topic must serve the ICP and map to a real keyword cluster — high commercial or authority intent, no fluff.
 - Prefer angles only Buteforce (a custom builder who ships production systems, not platforms) would credibly own.

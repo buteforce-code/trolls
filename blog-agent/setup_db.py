@@ -367,6 +367,60 @@ STATEMENTS = [
     "ALTER TABLE topics ADD COLUMN IF NOT EXISTS content_format text",
     "ALTER TABLE post_scores ADD COLUMN IF NOT EXISTS content_format text",
 
+    # ── Demand, measured before the post was written ─────────────────────────
+    # The verdict `swarm/demand` returned when this topic entered the queue:
+    #   {keyword, decision, volume, provider, reason, evidence}
+    #
+    # Nullable, and every existing row is null — those 46 topics were queued
+    # before any gate existed, and backfilling them with a measurement taken
+    # today would be a lie about what was known at the time. A null here means
+    # "this topic was never demand-checked", which is the true and useful fact.
+    #
+    # `provider` is stored per-row rather than read from the environment because
+    # the environment changes: a topic cleared by Search Console (which cannot
+    # prove absence of demand) and one cleared by DataForSEO (which can) did not
+    # pass the same test, and the learning layer must not average them together.
+    "ALTER TABLE topics ADD COLUMN IF NOT EXISTS demand_json jsonb",
+    "CREATE INDEX IF NOT EXISTS topics_demand_decision_idx "
+    "ON topics ((demand_json->>'decision'))",
+
+    # ── Distribution queue ───────────────────────────────────────────────────
+    # `social.py` has produced a full LinkedIn + X kit on every post since it was
+    # written — 33 of them by 2026-09-03 — and not one had ever been posted
+    # anywhere. This table is the missing half: one row per (post, channel,
+    # variant), dated, so a kit becomes a spread campaign instead of six
+    # near-identical posts fired in the same minute.
+    #
+    # The UNIQUE constraint is the important line. Enqueueing runs on every tick
+    # and re-reads every published post; without it, a tick that overlapped
+    # another would double-post to a real person's professional profile. That is
+    # the one failure that would make this feature unusable, so it is enforced by
+    # the database rather than by the read-then-write in queue.py.
+    """
+    CREATE TABLE IF NOT EXISTS distribution_queue (
+        id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        slug        text NOT NULL,
+        channel     text NOT NULL,
+        variant     text NOT NULL,
+        body        text NOT NULL DEFAULT '',
+        status      text NOT NULL DEFAULT 'queued',
+        due_at      timestamptz NOT NULL,
+        sent_at     timestamptz,
+        external_id text,
+        error       text,
+        created_at  timestamptz NOT NULL DEFAULT now(),
+        updated_at  timestamptz NOT NULL DEFAULT now(),
+        CONSTRAINT distribution_queue_unique UNIQUE (slug, channel, variant),
+        CONSTRAINT distribution_queue_status CHECK
+            (status IN ('queued', 'sent', 'failed', 'skipped'))
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS distribution_queue_due_idx "
+    "ON distribution_queue (status, due_at)",
+    "CREATE INDEX IF NOT EXISTS distribution_queue_sent_idx "
+    "ON distribution_queue (sent_at DESC)",
+    "ALTER TABLE distribution_queue ENABLE ROW LEVEL SECURITY",
+
     # ── Background job outcomes ──────────────────────────────────────────────
     # The cron endpoints spawn run.py and answer 200 as soon as it starts, so a
     # job that dies immediately reports the same success as one that worked.

@@ -63,6 +63,22 @@ NOISE_TERMS = {
 MIN_RELEVANCE = float(os.environ.get("TREND_MIN_RELEVANCE", "0.15"))
 RECENCY_HALF_LIFE_HOURS = float(os.environ.get("TREND_RECENCY_HALF_LIFE", "72"))
 
+# How far to trust each source, as a multiplier on its score. Measured, not
+# assumed — see `_credibility()` for the ranked list this was derived from.
+# First-party demand outranks the world's enthusiasm by construction.
+_SOURCE_CREDIBILITY = {
+    "gsc_rising":    1.00,
+    "hacker_news":   0.70,
+    "tavily_web":    0.55,
+    "tavily_linkedin": 0.55,
+    "tavily_reddit": 0.55,
+    "google_trends": 0.15,
+}
+# An unrecognised source is treated as a targeted search rather than as noise:
+# a new adapter is far more likely to be deliberate than to be a consumer feed,
+# and under-weighting a good new source is the quieter failure of the two.
+_DEFAULT_CREDIBILITY = 0.55
+
 # Word-boundary matching, not substring.
 #
 # The first live sweep let "tucson weather" and "flight" through the gate,
@@ -139,6 +155,44 @@ def _engagement(signal: RawSignal) -> float:
     return min(1.0, math.log1p(max(0.0, signal.engagement)) / math.log1p(1000.0))
 
 
+def _credibility(signal: RawSignal) -> float:
+    """How much this source's enthusiasm is worth to *this* brand.
+
+    Added 2026-09-03, after measuring what the top of the list actually contained.
+    The scoring was relevance x recency x engagement x novelty, with no term for
+    where the signal came from — so a mass-consumer spike with perfect recency and
+    huge engagement outscored a first-party Search Console query almost every time.
+
+    The list the ideator was handed, ranked:
+
+        66.7  google_trends  "fable 5.1"
+        43.7  google_trends  "booking"
+        41.0  gsc_rising     "sarvam code"                 <- the only real win
+        38.2  google_trends  "independence day 2026 photo"
+        28.2  gsc_rising     "machine vision companies in india"
+        24.9  google_trends  "gold rate today mumbai"
+
+    Both of this site's genuine wins came from `gsc_rising`, and every Trends
+    entry above is noise that cleared the relevance gate on a single keyword.
+    `sources.py` has said since it was written that Trends RSS is "close to
+    worthless for a B2B industrial-AI brand"; this is the line that makes the
+    ranking agree with the docstring.
+
+    Multiplicative, like the other terms, because credibility is not a bonus to
+    be outbid — a viral consumer story is still a viral consumer story no matter
+    how much engagement it has.
+
+      gsc_rising    first-party. Demand from this audience, already measured,
+                    arriving at the door and bouncing. Nothing beats it.
+      hacker_news   where AI and dev-tool stories break, with real engagement,
+                    days early. This is the source that caught Sarvam.
+      tavily_*      targeted LinkedIn/Reddit/web search — asked for, not swept up.
+      google_trends kept because it is free and occasionally a large tech story
+                    trends, but priced at what it has actually been worth.
+    """
+    return _SOURCE_CREDIBILITY.get(signal.source, _DEFAULT_CREDIBILITY)
+
+
 def _novelty(signal: RawSignal, existing_titles: set[str]) -> tuple[float, str]:
     """0.0 if the site already covers this ground."""
     words = {w for w in _text(signal).split() if len(w) > 4}
@@ -181,10 +235,14 @@ def score_signal(signal: RawSignal, existing_titles: set[str],
         "recency": round(_recency(signal, now), 4),
         "engagement": round(_engagement(signal), 4),
         "novelty": round(novelty, 4),
+        "credibility": round(_credibility(signal), 4),
     }
     # Multiplicative, not additive: a signal must be relevant AND timely AND
-    # discussed. Summing would let a stale but heavily-upvoted story outrank a
-    # breaking one, which is backwards for newsjacking.
+    # discussed AND come from somewhere worth listening to. Summing would let a
+    # stale but heavily-upvoted story outrank a breaking one, which is backwards
+    # for newsjacking — and would let consumer-trend volume buy its way past a
+    # first-party query, which is how "gold rate today mumbai" outranked
+    # "machine vision companies in india".
     score = 1.0
     for value in components.values():
         score *= max(0.01, value)

@@ -98,6 +98,30 @@ def _read_content(profile: BrandProfile, *names: str, vault_names: tuple[str, ..
     return _read_knowledge_file(*vault_names) if vault_names else ""
 
 
+def _clip(text: str, budget: int, label: str) -> str:
+    """Truncate to the prompt budget, and say so when it bites.
+
+    Every context block here has always been sliced with a bare `[:n]`, which is correct —
+    a prompt has to be bounded — but it was silent, and that is what made it dangerous.
+    `positioning.md` sat at 4,118 characters against a 3,400 budget from 2026-08-03 to
+    2026-09-03: the voice guardrails and the "what is NOT yet claimed" guard were cut from
+    every prompt in the swarm for a month, and nothing anywhere said so. The rule against
+    claiming a voice/telephony capability simply stopped being enforced.
+
+    Printed rather than raised. A file 20 characters over budget is not a reason to stop the
+    engine; it is a reason to be told.
+    """
+    if len(text) <= budget:
+        return text
+    print(
+        f"[brand_context] ! {label} is {len(text)} chars against a {budget} budget — "
+        f"the last {len(text) - budget} are CUT and reach no agent. Trim the file; "
+        "content at the end of it is not in force.",
+        flush=True,
+    )
+    return text[:budget]
+
+
 def _brand_context(profile: BrandProfile | None = None) -> str:
     p = profile or brand.active()
     brand_bible = _read_content(p, "brand-bible.md", vault_names=("brand_bible.md",))
@@ -109,16 +133,16 @@ def _brand_context(profile: BrandProfile | None = None) -> str:
 
     return f"""
 === BRAND BIBLE ({p.name}) ===
-{brand_bible[:3000]}
+{_clip(brand_bible, 3000, "brand-bible.md")}
 
 === VOICE ===
-{voice[:1200]}
+{_clip(voice, 1200, "voice guardrails")}
 
 === AUTHOR PERSONALITY ({p.author_name}) ===
-{personality[:1500]}
+{_clip(personality, 1500, "founder-personality.md")}
 
 === AUTHOR PROFILE ===
-{founder[:800]}
+{_clip(founder, 800, "founder.md")}
 """.strip()
 
 
@@ -127,7 +151,7 @@ def _seo_context(profile: BrandProfile | None = None) -> str:
     seo = _read_content(p, "seo-strategy.md", vault_names=("seo_strategy.md",))
     return f"""
 === SEO STRATEGY (keyword clusters) ===
-{seo[:2600]}
+{_clip(seo, 2600, "seo-strategy.md")}
 """.strip()
 
 
@@ -157,9 +181,11 @@ def _signals_context(profile: BrandProfile | None = None) -> str:
 
     blocks = []
     if curated:
-        blocks.append(f"--- curated market knowledge ---\n{curated[:2600]}")
+        clipped = _clip(curated, 2600, "gsc-signals.md")
+        blocks.append(f"--- curated market knowledge ---\n{clipped}")
     if measured:
-        blocks.append(f"--- measured performance (auto-generated) ---\n{measured[:2200]}")
+        clipped = _clip(measured, 2200, "gsc-signals-generated.md")
+        blocks.append(f"--- measured performance (auto-generated) ---\n{clipped}")
 
     body = "\n\n".join(blocks)
     return f"""
@@ -187,11 +213,11 @@ def _strategy_context(profile: BrandProfile | None = None) -> str:
             "Refusing to fall back to another brand's positioning."
         )
 
-    parts = [positioning[:3400]]
+    parts = [_clip(positioning, 3400, "positioning.md")]
 
     icp = p.icp or _read_content(p, "icp.md")
     if icp:
-        parts.append(icp[:1200])
+        parts.append(_clip(icp, 1200, "icp.md"))
 
     if p.do_not_name:
         parts.append(f"Do not name or reference: {', '.join(p.do_not_name)}.")

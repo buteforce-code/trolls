@@ -352,6 +352,27 @@ def _refill(db: Any, orch: Any, batch: int, log: list[str]) -> int:
         log.append(f"  ideation crashed: {exc}")
         return 0
 
+    # ── the demand gate ───────────────────────────────────────────────────────
+    # Every ideator topic enters the queue here and only here, so this is the one
+    # place a demand check can be enforced rather than hoped for. It runs *before*
+    # the topic is stored, so a keyword nobody searches costs one cheap lookup
+    # instead of a research pass, a 2,500-word draft, three GEO gate runs and a
+    # slot of a new domain's publishing reputation.
+    #
+    # Rejections are logged individually and counted. They are the most valuable
+    # output this function produces — the record of what the gate is saving —
+    # and they used to not exist at all.
+    from swarm import demand
+    from swarm.demand.providers import resolve_provider
+
+    ideas, verdicts = demand.gate_topics(ideas, provider=resolve_provider(db), log=log)
+    log.append("  " + demand.summarise(verdicts))
+    if not ideas:
+        log.append("  ! every ideated topic failed the demand gate — nothing queued. "
+                   "That is the gate working, not the engine breaking: the batch had "
+                   "no keyword anyone searches for.")
+        return 0
+
     # The run that produced these ideas, so a topic can be traced back to the
     # exact ideation pass (and its cost) that invented it.
     try:
@@ -380,6 +401,11 @@ def _refill(db: Any, orch: Any, batch: int, log: list[str]) -> int:
                 "source_kind": "ideator",
                 "source_detail": source,
                 "source_run_id": run_id,
+                # The measurement that let this topic through, stored beside it.
+                # The learning layer can then score an outcome against the demand
+                # measured *before* the post was written, rather than inferring
+                # it after the post has already flopped.
+                "demand_json": idea.get("demand"),
                 "created_at": now,
                 "updated_at": now,
             }).execute()
