@@ -285,6 +285,40 @@ def test_switched_off_is_loud_not_silent() -> int:
     return f
 
 
+def test_a_written_keyword_matches_a_typed_query() -> int:
+    """The gap between how a keyword is written and how a query is typed.
+
+    Live case: the gate returned `unverified` for "machine vision companies India" while
+    the site was already earning impressions for "machine vision companies **in** india".
+    One function word, and exact-plus-substring matching could not see across it — which
+    made the free provider far weaker than the data it was reading.
+    """
+    from swarm.demand.providers import _content_tokens, _same_demand
+
+    f = 0
+    same = [
+        ("machine vision companies india", "machine vision companies in india"),
+        ("machine vision companies india", "top machine vision companies india"),
+        ("computer vision quality control", "what is computer vision quality control"),
+    ]
+    for written, typed in same:
+        if not _same_demand(_content_tokens(written), _content_tokens(typed)):
+            _fail(f"{written!r} should match the typed query {typed!r}")
+            f += 1
+
+    # Containment, never mere overlap — these share two words and are different markets.
+    different = [
+        ("computer vision quality control", "computer vision fmcg"),
+        ("document ai logistics", "document ai finance"),
+        ("ai agents retail", "ai agents healthcare"),
+    ]
+    for a, b in different:
+        if _same_demand(_content_tokens(a), _content_tokens(b)):
+            _fail(f"{a!r} and {b!r} are different markets and must not collapse")
+            f += 1
+    return f
+
+
 def test_summary_counts_every_outcome() -> int:
     f = 0
     verdicts = [
@@ -332,6 +366,7 @@ def main() -> int:
         ("normalisation is stable", test_normalisation_is_stable),
         ("gate_topics filters and annotates", test_gate_topics_filters_and_annotates),
         ("switched off is loud", test_switched_off_is_loud_not_silent),
+        ("written keyword matches typed query", test_a_written_keyword_matches_a_typed_query),
         ("summary counts every outcome", test_summary_counts_every_outcome),
         ("verdict serialises for storage", test_verdict_serialises_for_storage),
     ]

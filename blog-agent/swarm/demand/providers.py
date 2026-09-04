@@ -45,6 +45,38 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+# Function words carry no demand signal and are exactly what separates a keyword from the
+# query people actually type. Deliberately tiny: this is a matching aid, not a stemmer, and a
+# long stopword list would start collapsing genuinely different keywords onto each other.
+_STOPWORDS = frozenset({
+    "a", "an", "the", "in", "on", "at", "for", "of", "to", "and", "or", "with",
+    "is", "are", "vs", "best", "top", "how", "what", "your", "you",
+})
+
+
+def _content_tokens(text: str) -> frozenset[str]:
+    return frozenset(t for t in text.split() if t not in _STOPWORDS)
+
+
+def _same_demand(wanted: frozenset[str], found: frozenset[str]) -> bool:
+    """Do these two phrases represent the same search demand?
+
+    True when one phrase's content words contain the other's. Added after the gate returned
+    `unverified` for "machine vision companies India" while the site was already earning
+    impressions for "machine vision companies **in** india" — one function word apart, and
+    substring matching cannot see across it. Near-misses like that are the common case, not
+    the exception, so exact-and-substring alone made the free provider far weaker than the
+    data it was reading.
+
+    Containment rather than any-overlap, because overlap is far too generous at this token
+    count: "computer vision quality control" and "computer vision fmcg" share two words and
+    are different markets.
+    """
+    if not wanted or not found:
+        return False
+    return wanted <= found or found <= wanted
+
+
 # ── none ──────────────────────────────────────────────────────────────────────
 class NullProvider:
     """The switched-off state, as an object rather than a branch.
@@ -76,11 +108,13 @@ class SearchConsoleProvider:
     never ranked for, so silence here means "no record", not "no demand". The gate
     reads that flag and refuses to let this provider veto anything.
 
-    Matching is exact-then-substring. A post targeting "computer vision quality
-    control india" should inherit the evidence of the rising query "computer
-    vision quality control", because they are the same demand — but the wider
-    match is recorded in the evidence so the inheritance is auditable rather than
-    assumed.
+    Matching runs exact, then substring, then content-word containment, and the
+    tier that hit is recorded in the evidence so an inherited match is auditable
+    rather than assumed. The third tier is not a nicety: without it the gate
+    returned `unverified` for "machine vision companies India" while this site was
+    already earning impressions for "machine vision companies **in** india". One
+    function word, and the free provider could not see across it. Near-misses are
+    the common case — a keyword is written, a query is typed.
     """
     name = "gsc"
     can_falsify = False
@@ -104,7 +138,8 @@ class SearchConsoleProvider:
         except Exception as exc:
             return Measurement(keyword, error=f"Search Console read failed: {exc}"[:300])
 
-        exact, partial = [], []
+        exact, partial, overlap = [], [], []
+        wanted = _content_tokens(keyword)
         for row in rows:
             query = (row.get("query") or "").strip().lower()
             if not query:
@@ -113,8 +148,10 @@ class SearchConsoleProvider:
                 exact.append(row)
             elif keyword in query or query in keyword:
                 partial.append(row)
+            elif wanted and _same_demand(wanted, _content_tokens(query)):
+                overlap.append(row)
 
-        matched = exact or partial
+        matched = exact or partial or overlap
         if not matched:
             return Measurement(keyword, evidence={
                 "provider": "gsc",
@@ -135,7 +172,7 @@ class SearchConsoleProvider:
             "provider": "gsc",
             "measure": "site impressions, not market search volume",
             "window_days": self._window_days,
-            "match": "exact" if exact else "substring",
+            "match": "exact" if exact else ("substring" if partial else "token-overlap"),
             "matched_queries": sorted({(r.get("query") or "") for r in matched})[:8],
             "impressions": impressions,
             "clicks": clicks,
