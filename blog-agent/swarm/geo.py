@@ -23,12 +23,19 @@ So this module encodes six requirements as ONE template change that every future
   5. VISIBLE dateModified   — freshness, rendered on-page and in JSON-LD.
   6. NAMED AUTHOR           — a person, not "the team". Entity signal; SCAN 001's root cause was
                               an entity gap, not a content gap.
+  7. A WORKING CTA LINK     — a real link to the brand's conversion path. Added 2026-09-03:
+                              across 38 published posts the writer produced TWO links to
+                              /lp/ai-audit (which converts at 83%) and zero to /contact, ending
+                              every post with a sentence that described a call to action instead
+                              of being one. GA4 logged no key event from any blog URL in 90 days.
 
 DESIGN SPLIT — the repo has already been burned once by trusting a prompt (the 2026-06-29
 gpt-4o switch silently halved output; five thin posts shipped). So:
   - (1)-(4) are AUTHORED by the writer, then VERIFIED here. A failure returns a precise repair
     brief; the orchestrator retries once, then holds the topic for human review. Never publishes.
-  - (5)-(6) are pure metadata, so they are INJECTED deterministically. Nothing to get wrong.
+  - (5)-(7) are mechanism rather than argument, so they are INJECTED deterministically by
+    `inject_deterministic()`. Nothing to get wrong. The writer keeps authoring the closing
+    paragraph; requirement 7 appends the door beneath it.
 
 `GEO_TEMPLATE_RULES` is the prompt half, injected into the writer. `audit()` is the gate half.
 The prompt is advisory. The gate is not.
@@ -356,6 +363,42 @@ def _audit_not_a_fit(sections: list[Section], report: GeoReport, profile: BrandP
     )
 
 
+def _strip_cta(body: str) -> str:
+    """The body as the writer wrote it, with the injected CTA block removed.
+
+    Defined here rather than beside the injector because the audit is the only caller that
+    needs it, and the reason it exists is an audit concern: injected text must never help a
+    draft satisfy a requirement the writer was supposed to meet.
+    """
+    return _CTA_BLOCK_RE.sub("\n\n", body).rstrip()
+
+
+def _audit_conversion_link(body: str, report: GeoReport, profile: BrandProfile) -> None:
+    """Requirement 7: the post must carry a real, working link to somewhere a reader can act.
+
+    Injected by `inject_cta`, so a miss here means injection was skipped or something
+    downstream stripped it — the linker rewriting URLs and the humaniser rewriting prose have
+    both eaten deterministic content before. Checking it on the exact artefact that will be
+    published is the only version of this check worth having.
+
+    Brands with no `cta_path` configured are exempt rather than failed: a tenant that has not
+    named a conversion target has a configuration gap, and failing every one of its posts at
+    the gate would be an unhelpful way to report that. `validate()` is where intake gaps belong.
+    """
+    if not profile.cta_path:
+        return
+    bare = re.split(r"[?#]", profile.cta_path, maxsplit=1)[0].rstrip("/")
+    if not bare:
+        return
+    # Match the path inside a markdown link target, with or without query/fragment.
+    if re.search(rf"\]\(\s*{re.escape(bare)}(?:[/?#][^)\s]*)?\s*\)", body):
+        return
+    report.failures.append(
+        f"The post has no link to {profile.cta_path}. A reader convinced by 2,000 words has "
+        "nowhere to go: end with a real link, not a sentence describing one."
+    )
+
+
 def _audit_metadata(frontmatter: str, report: GeoReport) -> None:
     """Metadata is injected by `inject_metadata`, so a miss here means injection was skipped."""
     for key in ("author", "dateModified"):
@@ -379,12 +422,22 @@ def audit(
     """
     profile = profile or brand.active()
     frontmatter, body = split_frontmatter(mdx)
-    sections = parse_sections(body)
+
+    # Requirements 1-4 judge what the WRITER produced, so they are measured against the body
+    # with the injected CTA removed. Without this the block lands inside whatever section is
+    # last — usually "not a fit if…" — and its ~30 words count toward that section's minimum.
+    # A one-line disqualifier then passes requirement 4 on the strength of text the writer
+    # never wrote, which is the gate grading its own injection.
+    authored = _strip_cta(body)
+
     report = GeoReport()
+    sections = parse_sections(authored)
     _audit_question_answers(sections, report, profile)
-    _audit_proof_numbers(body, report, profile)
-    _audit_competitor_table(body, report, profile, cluster)
+    _audit_proof_numbers(authored, report, profile)
+    _audit_competitor_table(authored, report, profile, cluster)
     _audit_not_a_fit(sections, report, profile)
+    # Requirement 7 is about the artefact that ships, so it reads the full body.
+    _audit_conversion_link(body, report, profile)
     _audit_metadata(frontmatter, report)
     return report
 
@@ -419,6 +472,69 @@ def inject_metadata(
         fm = f'{fm}\nauthor: "{author}"'
 
     return f"{head}{fm}{close}{body}"
+
+
+# ── Deterministic CTA injection (requirement 7) ───────────────────────────────────────────
+# The marker is what makes this idempotent across the four points in the pipeline that
+# re-finalise a draft, and what lets a re-run replace an old CTA rather than stack a second
+# one under it. An HTML comment survives MDX rendering invisibly.
+_CTA_MARKER = "<!-- geo:cta -->"
+_CTA_BLOCK_RE = re.compile(
+    rf"\n*{re.escape(_CTA_MARKER)}.*?{re.escape(_CTA_MARKER)}\n*", re.DOTALL
+)
+
+
+def inject_cta(mdx: str, *, profile: BrandProfile | None = None) -> str:
+    """Append the brand's conversion block to the body. Idempotent.
+
+    Requirement 7 is injected rather than prompted for, on the same reasoning as 5 and 6: it
+    is mechanism, not argument, and the writer has already been measured failing it. Across 38
+    published posts it produced two links to the page that converts and zero to /contact, while
+    closing every single post with a sentence that *described* a call to action without being
+    one. GA4 recorded no key event from any blog URL in 90 days.
+
+    What is NOT taken from the writer: the closing paragraph. It writes a good one, tied to the
+    post's own vertical, and this appends beneath it rather than replacing it. The argument
+    stays authored; only the door gets fitted.
+    """
+    p = profile or brand.active()
+    if not p.cta_path or not p.cta_label:
+        return mdx
+
+    # `split_frontmatter` drops the `---` delimiters, so reassembling from it would strip the
+    # frontmatter markers off every post. Match the full structure instead, exactly as
+    # `inject_metadata` does.
+    m = _FRONTMATTER.match(mdx)
+    head, body = (f"{m.group(1)}{m.group(2)}{m.group(3)}", m.group(4)) if m else ("", mdx)
+
+    body = _CTA_BLOCK_RE.sub("\n\n", body).rstrip()
+
+    note = f"\n\n{p.cta_note}" if p.cta_note else ""
+    block = (
+        f"\n\n{_CTA_MARKER}\n\n---\n\n"
+        f"**[{p.cta_label}]({p.cta_path})**{note}\n\n"
+        f"{_CTA_MARKER}\n"
+    )
+    return f"{head}{body}{block}"
+
+
+def inject_deterministic(
+    mdx: str,
+    *,
+    author: str = "",
+    date_modified: str = "",
+    profile: BrandProfile | None = None,
+) -> str:
+    """Apply every requirement the writer is not asked for: 5, 6 and 7.
+
+    One call site rather than three, so a new deterministic requirement is added in one place
+    and cannot be half-wired into a pipeline that finalises a draft four separate times.
+    """
+    p = profile or brand.active()
+    return inject_cta(
+        inject_metadata(mdx, author=author, date_modified=date_modified, profile=p),
+        profile=p,
+    )
 
 
 # ── Prompt half — injected into the writer ────────────────────────────────────────────────
@@ -489,6 +605,7 @@ following before anything publishes, and a failure blocks the post. Build them i
    {t.not_a_fit_min_words} words. This is the highest-credibility block on the page — write it
    like you are talking someone out of a bad purchase, because you are.
 
-5 & 6. dateModified + named author are injected automatically after you write. Do not add them
+5, 6 & 7. dateModified, the named author and the closing CTA link are injected automatically
+   after you write. Do not add them
    to the frontmatter yourself, and do not sign the post in the body.
 """.strip()

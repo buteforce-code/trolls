@@ -864,7 +864,7 @@ class BlogOrchestrator:
         degradation all over again.
         """
         recorder = get_recorder()
-        draft = geo.inject_metadata(draft)
+        draft = geo.inject_deterministic(draft)
         for attempt in range(1, _GEO_RETRIES + 1):
             report = geo.audit(draft, cluster=cluster)
             if report.ok:
@@ -885,7 +885,7 @@ class BlogOrchestrator:
                 print(f"         - {failure}", flush=True)
             recorder.gate("geo_gate", passed=False, reason=" | ".join(report.failures), attempt=attempt)
 
-            draft = geo.inject_metadata(_run(
+            draft = geo.inject_deterministic(_run(
                 self.writer_agent,
                 f"{writer_prompt}\n\n{report.as_brief()}\n\nPREVIOUS DRAFT:\n{draft}",
                 f"writer-{topic_id}-geo-{attempt}",
@@ -959,7 +959,7 @@ class BlogOrchestrator:
 
         # Same guard for the GEO template: the humaniser rewrites freely and has no reason to
         # respect a table or a 40-word answer block. If it broke one, the writer's draft wins.
-        humanised = geo.inject_metadata(humanised)
+        humanised = geo.inject_deterministic(humanised)
         if not geo.audit(humanised).ok and geo.audit(draft).ok:
             print(
                 "[writer] Humaniser broke the GEO template; keeping the writer's draft.",
@@ -1010,7 +1010,7 @@ class BlogOrchestrator:
         linked_mdx = re.sub(r'(?m)^date:.*$', f'date: "{today}"', linked_mdx, count=1)
         # `^date:` cannot match `dateModified:`, so set that one explicitly and last — the
         # imager and linker both rewrite the body after the gate ran.
-        linked_mdx = geo.inject_metadata(linked_mdx, date_modified=today)
+        linked_mdx = geo.inject_deterministic(linked_mdx, date_modified=today)
 
         word_count = _body_word_count(linked_mdx)
 

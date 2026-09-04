@@ -161,6 +161,23 @@ class BrandProfile:
     competitor_aliases: dict[str, tuple[str, ...]] = field(default_factory=dict)
     banned_adjectives_extra: tuple[str, ...] = ()
 
+    # ── Conversion target (GEO requirement 7) ─────────────────────────────────────────────
+    # Where a convinced reader goes next. Per-brand rather than constant, for the same reason
+    # `hosts` is: a second tenant's audit page is not at Buteforce's URL.
+    #
+    # Measured 2026-09-03, and the reason this is injected rather than asked for: across 38
+    # published posts the writer produced 28 links to /services/ai-development, 27 to
+    # /services/automation, and TWO to /lp/ai-audit — the page that converts at 83%. Every post
+    # closed with a prose sign-off ("Buteforce can help you scope it") carrying no link at all.
+    # GA4 recorded zero key events from any blog URL over 90 days.
+    #
+    # A CTA is half argument and half mechanism. The writer keeps the argument — it already
+    # writes a good closing paragraph tied to the post's own vertical. The mechanism stops
+    # being its problem.
+    cta_path: str = ""
+    cta_label: str = ""
+    cta_note: str = ""
+
     thresholds: GateThresholds = field(default_factory=GateThresholds)
 
     # ── Derived views ─────────────────────────────────────────────────────────────────────

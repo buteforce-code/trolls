@@ -252,6 +252,10 @@ def test_a_post_written_for_us_fails_another_brands_gate() -> int:
         "| Custom build | Unusual defects | Fits a defect set no sensor ships with |\n\n"
         "## Not a fit if\n\n" + _words(50) + "\n"
     )
+    # Requirement 7 is injected per-tenant, so the fixture is finalised under the profile it
+    # is meant to pass. Doing it here rather than hardcoding a path keeps the test about
+    # evidence isolation: Chairside's CTA is not Buteforce's, and neither is its URL.
+    buteforce_post = geo.inject_cta(buteforce_post, profile=brand.load("buteforce"))
 
     failures = 0
     if geo.audit(buteforce_post, profile=brand.load("buteforce")).ok is False:

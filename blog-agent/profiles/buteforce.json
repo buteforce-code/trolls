@@ -15,6 +15,17 @@
 
   "do_not_name": ["EasyBali"],
 
+  "_conversion_note": [
+    "Where a finished post sends a convinced reader. /lp/ai-audit converted 5 of 6 sessions",
+    "over 90 days (83%) while every blog URL produced zero key events — because across 38",
+    "posts the writer linked it exactly twice. Injected deterministically now, like the",
+    "byline and dateModified, and verified by GEO requirement 7. The path must also be in",
+    "KNOWN_PATHS in swarm/links.py or the link validator will unwrap it."
+  ],
+  "cta_path": "/lp/ai-audit?utm_source=blog&utm_medium=cta",
+  "cta_label": "Book a free AI audit",
+  "cta_note": "Bring one workflow, its inputs, and the point where it breaks. You get a straight answer on whether it should be built — and what it would take.",
+
   "proof_points": [
     {
       "label": "99.2% vision accuracy",

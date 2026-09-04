@@ -61,7 +61,15 @@ def _is_homepage(url: str) -> bool:
 
 
 def _internal_path_ok(path: str, known_slugs: set[str]) -> bool:
-    bare = path.split("#", 1)[0].rstrip("/") or "/"
+    """Is this internal path a real destination?
+
+    The query string is stripped before the check, not just the fragment. Only the fragment
+    was, which made every internal link carrying a query param fail the KNOWN_PATHS lookup and
+    get unwrapped — silently, since unwrapping keeps the anchor text and only drops the link.
+    That made attribution impossible to add: `/lp/ai-audit?utm_source=blog` is the same page as
+    `/lp/ai-audit`, and it was the tagged version that got deleted.
+    """
+    bare = re.split(r"[?#]", path, maxsplit=1)[0].rstrip("/") or "/"
     if bare in KNOWN_PATHS:
         return True
     if bare.startswith("/blog/"):

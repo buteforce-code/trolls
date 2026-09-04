@@ -131,12 +131,37 @@ def test_frontmatter_and_images_untouched() -> int:
     return failures
 
 
+def test_query_tagged_internal_link_survives() -> int:
+    """A UTM-tagged internal link is still an internal link.
+
+    `_internal_path_ok` stripped only the fragment, never the query, so any internal link
+    carrying a query param missed the KNOWN_PATHS lookup and was unwrapped — silently, since
+    unwrapping keeps the anchor text and drops only the href. That made blog-to-landing-page
+    attribution impossible to add: the untagged link survived and the tagged one vanished.
+    """
+    failures = 0
+    for url in ("/lp/ai-audit?utm_source=blog&utm_medium=cta",
+                "/services?ref=post",
+                "/lp/ai-audit?utm_source=blog#book"):
+        out, report = normalise_links(f"Text [Book an audit]({url}) here.")
+        if url not in out:
+            _fail(f"a tagged internal link was stripped: {url} ({report['phantom_internal']})")
+            failures += 1
+    # And the rule still bites: a query string must not smuggle an unknown path through.
+    out, _ = normalise_links("Go [here](/not-a-real-page?utm_source=blog).")
+    if "/not-a-real-page" in out:
+        _fail("a query string let an unknown internal path past the validator")
+        failures += 1
+    return failures
+
+
 def main() -> int:
     tests = [
         ("www internal links become relative", test_www_internal_becomes_relative),
         ("phantom /blog/ link unwrapped", test_phantom_blog_link_is_unwrapped),
         ("real /blog/ link survives", test_real_blog_link_survives),
         ("homepage citation unwrapped", test_homepage_citation_is_unwrapped),
+        ("query-tagged internal link survives", test_query_tagged_internal_link_survives),
         ("uncited external unwrapped", test_uncited_external_is_unwrapped),
         ("cited external survives", test_cited_external_survives),
         ("frontmatter and images untouched", test_frontmatter_and_images_untouched),

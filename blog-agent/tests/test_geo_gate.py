@@ -13,8 +13,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from swarm import brand  # noqa: E402
-from swarm import geo  # noqa: E402
+from swarm import brand, geo, links  # noqa: E402
 
 
 def _fail(msg: str) -> None:
@@ -53,7 +52,9 @@ def _compliant_body() -> str:
 
 
 def _compliant() -> str:
-    return geo.inject_metadata(FRONTMATTER + _compliant_body())
+    """A post shaped exactly as the pipeline emits one: authored body, then every
+    deterministic requirement injected (5, 6 and 7)."""
+    return geo.inject_deterministic(FRONTMATTER + _compliant_body())
 
 
 # ── Baseline ──────────────────────────────────────────────────────────────────────────────
@@ -459,6 +460,123 @@ def test_repair_brief_names_every_failure() -> int:
     return failures
 
 
+# ── Requirement 7: a working conversion link ──────────────────────────────────────────────
+def test_cta_is_injected_with_a_real_link() -> int:
+    """The measured failure: 38 posts, two links to the page that converts, zero key events."""
+    f = 0
+    p = brand.active()
+    out = _compliant()
+    if f"]({p.cta_path})" not in out:
+        _fail("the CTA link was not injected into the body")
+        f += 1
+    if p.cta_label not in out:
+        _fail("the CTA label is missing")
+        f += 1
+    if not geo.audit(out).ok:
+        _fail(f"an injected CTA did not satisfy the gate: {geo.audit(out).failures}")
+        f += 1
+    return f
+
+
+def test_a_post_with_no_cta_link_fails() -> int:
+    f = 0
+    without = geo.inject_metadata(FRONTMATTER + _compliant_body())
+    report = geo.audit(without)
+    if report.ok:
+        _fail("a post with no link to the conversion path passed the gate")
+        f += 1
+    if not any("no link to" in x for x in report.failures):
+        _fail(f"the failure does not name the missing CTA: {report.failures}")
+        f += 1
+    return f
+
+
+def test_prose_describing_a_cta_is_not_a_cta() -> int:
+    """The exact shape all 38 published posts ended in: a sentence, not a destination."""
+    f = 0
+    body = _compliant_body() + (
+        "\n\nIf this is your bottleneck, Buteforce can help you scope it. "
+        "Bring the workflow and we will tell you plainly whether it should be built.\n"
+    )
+    mdx = geo.inject_metadata(FRONTMATTER + body)
+    if geo.audit(mdx).ok:
+        _fail("a prose sign-off with no link passed as a conversion path")
+        f += 1
+    return f
+
+
+def test_cta_injection_is_idempotent() -> int:
+    """Four points in the pipeline re-finalise a draft; none may stack a second CTA."""
+    f = 0
+    once = _compliant()
+    twice = geo.inject_deterministic(geo.inject_deterministic(once))
+    if twice.count(geo._CTA_MARKER) != 2:
+        _fail(f"expected one marked block, found {twice.count(geo._CTA_MARKER) // 2}")
+        f += 1
+    if twice.count(brand.active().cta_label) != 1:
+        _fail("the CTA was duplicated across repeated injection")
+        f += 1
+    if not geo.audit(twice).ok:
+        _fail(f"a twice-injected post failed the gate: {geo.audit(twice).failures}")
+        f += 1
+    return f
+
+
+def test_cta_injection_preserves_frontmatter_and_body() -> int:
+    f = 0
+    out = _compliant()
+    if not out.lstrip().startswith("---"):
+        _fail("frontmatter delimiters were lost during CTA injection")
+        f += 1
+    if "## Not a fit if" not in out:
+        _fail("the authored body did not survive CTA injection")
+        f += 1
+    fm, _ = geo.split_frontmatter(out)
+    if "dateModified" not in fm or "author" not in fm:
+        _fail("metadata injection did not survive alongside the CTA")
+        f += 1
+    return f
+
+
+def test_injected_cta_cannot_satisfy_an_authored_requirement() -> int:
+    """The gate must not grade its own injection.
+
+    The CTA block is appended after the last authored section — normally "not a fit if…" —
+    so before `_strip_cta` its ~30 words counted toward that section's 40-word minimum, and a
+    one-line disqualifier passed requirement 4 on text the writer never produced. Caught by
+    the existing token-disqualifier test the first time the CTA shipped.
+    """
+    f = 0
+    thin = _compliant().replace(NOT_A_FIT, "## Not a fit if you are tiny\n\nToo small.\n")
+    report = geo.audit(thin)
+    if report.ok:
+        _fail("a one-line disqualifier passed because the injected CTA padded the section")
+        f += 1
+    if not any("only" in x and "words" in x for x in report.failures):
+        _fail(f"the word-count failure was not reported: {report.failures}")
+        f += 1
+    return f
+
+
+def test_cta_survives_the_link_validator() -> int:
+    """A UTM-tagged internal link is still an internal link.
+
+    `_internal_path_ok` used to strip only the fragment, so a tagged CTA failed the
+    KNOWN_PATHS lookup and was unwrapped — silently, since unwrapping keeps the anchor
+    text. Attribution was impossible to add for exactly that reason.
+    """
+    f = 0
+    cleaned, report = links.normalise_links(_compliant(), known_slugs=set(), cited_urls=set())
+    if brand.active().cta_path not in cleaned:
+        _fail(f"the link validator stripped the CTA: {report['phantom_internal']}")
+        f += 1
+    if not geo.audit(cleaned).ok:
+        _fail(f"the post failed the gate after link validation: {geo.audit(cleaned).failures}")
+        f += 1
+    return f
+
+
+
 def main() -> int:
     tests = [
         ("compliant post passes", test_compliant_post_passes),
@@ -491,6 +609,13 @@ def main() -> int:
         ("missing metadata reported", test_missing_metadata_is_reported),
         ("code fences ignored", test_headings_inside_code_fences_are_ignored),
         ("repair brief names every failure", test_repair_brief_names_every_failure),
+        ("CTA injected with a real link", test_cta_is_injected_with_a_real_link),
+        ("no CTA link fails", test_a_post_with_no_cta_link_fails),
+        ("prose describing a CTA is not a CTA", test_prose_describing_a_cta_is_not_a_cta),
+        ("CTA injection idempotent", test_cta_injection_is_idempotent),
+        ("CTA injection preserves the post", test_cta_injection_preserves_frontmatter_and_body),
+        ("injected CTA cannot satisfy an authored rule", test_injected_cta_cannot_satisfy_an_authored_requirement),
+        ("CTA survives the link validator", test_cta_survives_the_link_validator),
     ]
     total = 0
     for name, fn in tests:
