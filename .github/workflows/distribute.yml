@@ -1,0 +1,65 @@
+name: Distribute
+
+# Ships the social kit the swarm has been writing since social.py was added.
+#
+# `social.py` runs on every post and produces a full LinkedIn + X kit — six
+# LinkedIn variants, threads, single tweets, hashtags. By 2026-09-03 there were
+# 33 kits in the database and not one had ever been posted anywhere. That is a
+# built, paid-for acquisition channel sitting in a jsonb column, and it matters
+# because this domain is 6-12 months from search producing anything, while
+# LinkedIn needs no domain authority at all.
+#
+# Twice a day, and at most ONE send per tick regardless. The first enqueue
+# scheduled 165 sends across 33 posts; draining that at cron speed would empty
+# three months of content into an afternoon, which is bad for reach and
+# unmistakably automated. The real spacing floor is DISTRIBUTE_GAP_HOURS
+# (default 24) inside the tick — this schedule only offers chances to send.
+#
+# Cheap: one HTTP call, no LLM, no agents.
+#
+# NOTHING GOES OUT until DISTRIBUTE_DRY_RUN=false is set on the service. Until
+# then every tick logs what it would have posted. That default is deliberate —
+# a blog post can be deleted quietly; a bad post under a real person's name is
+# seen before it can be.
+#
+# Required repo secrets:
+#   DISTRIBUTE_URL         e.g. https://<dashboard>.onrender.com/api/distribute
+#   AUTOPILOT_TICK_SECRET  the same secret the other scheduled jobs use
+
+on:
+  schedule:
+    - cron: '35 4,13 * * *'   # 10:05 and 18:35 IST — inside working hours, when B2B feeds are read
+  workflow_dispatch: {}
+
+concurrency:
+  group: distribute
+  cancel-in-progress: false
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger distribution tick
+        env:
+          DISTRIBUTE_URL: ${{ secrets.DISTRIBUTE_URL }}
+          DISTRIBUTE_SECRET: ${{ secrets.AUTOPILOT_TICK_SECRET }}
+        run: |
+          if [ -z "$DISTRIBUTE_URL" ] || [ -z "$DISTRIBUTE_SECRET" ]; then
+            echo "::error::DISTRIBUTE_URL and AUTOPILOT_TICK_SECRET repo secrets must be set."
+            exit 1
+          fi
+          code=$(curl -s -o /tmp/distribute.out -w "%{http_code}" -X POST "$DISTRIBUTE_URL" \
+            -H "Authorization: Bearer $DISTRIBUTE_SECRET" \
+            -H "Content-Type: application/json" \
+            --max-time 60 || echo "000")
+          echo "HTTP $code"
+          cat /tmp/distribute.out || true
+          echo ""
+          if [ "$code" = "000" ]; then
+            echo "::error::Could not reach DISTRIBUTE_URL at all — check the secret's URL, not the server."
+            exit 1
+          fi
+          if [ "$code" != "200" ]; then
+            echo "::error::Distribution tick failed (HTTP $code)."
+            exit 1
+          fi

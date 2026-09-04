@@ -84,6 +84,14 @@ def main():
                    help="Score every published post, fit the bandit, and rank the queue")
     g.add_argument("--scout", action="store_true",
                    help="Sweep trend sources, gate them against the brand, and store scored signals")
+    g.add_argument("--distribute", action="store_true",
+                   help="One distribution tick: schedule published posts, send at most one")
+    g.add_argument("--distribution-queue", action="store_true", dest="distribution_queue",
+                   help="Show what is scheduled to go out and when")
+    g.add_argument("--mark-posted", metavar="ID", dest="mark_posted",
+                   help="Record that you posted a queued send by hand")
+    g.add_argument("--health", action="store_true",
+                   help="Report engine liveness; exits non-zero if anything is stalled")
     g.add_argument("--list-failed", action="store_true", dest="list_failed",
                    help="Show every failed topic and which stage it could resume at. Spends nothing")
     g.add_argument("--resume-failed", action="store_true", dest="resume_failed",
@@ -132,12 +140,51 @@ def main():
 
     # HTTP fetches plus deterministic scoring — no agents, no LLM calls.
     if args.scout:
-        from swarm.jobs import run_and_record
+        from swarm.jobs import health_report, run_and_record
         from swarm.trends.scout import run_scout
 
         db = _db()
         run_and_record(db, "scout", lambda: run_scout(db))
+        # Liveness rides along with the sweep rather than needing its own cron.
+        # The scout runs hourly and costs nothing, so it is the cheapest place to
+        # notice that the engine has stopped — and a failing health check makes
+        # this job report ok=False, which turns the Actions workflow red.
+        run_and_record(db, "health", lambda: health_report(db))
         return
+
+    # Distribution: HTTP only, no agents, no LLM calls. Before the orchestrator for the same
+    # reason --health is: shipping the kits already written must not require a writer model.
+    if args.distribute:
+        from swarm.distribute.queue import run_tick as distribute_tick
+        from swarm.jobs import run_and_record
+
+        db = _db()
+        run_and_record(db, "distribute", lambda: distribute_tick(db))
+        return
+
+    if args.distribution_queue:
+        from swarm.distribute.queue import describe as describe_queue
+
+        for line in describe_queue(_db(), limit=args.limit):
+            print(line, flush=True)
+        return
+
+    if args.mark_posted:
+        from swarm.distribute.queue import mark_posted
+
+        for line in mark_posted(_db(), args.mark_posted):
+            print(line, flush=True)
+        return
+
+    # Read-only liveness check. Deliberately before the orchestrator is built:
+    # "is my engine alive" must be answerable without every provider key present.
+    if args.health:
+        from swarm.jobs import health_report as _report
+
+        lines = _report(_db())
+        for line in lines:
+            print(line, flush=True)
+        sys.exit(1 if any(line.startswith("! ") for line in lines) else 0)
 
     # Read-only inventory of what is stranded. Deliberately before the orchestrator
     # is built: an operator asking "what is stuck and what will it cost me" should
